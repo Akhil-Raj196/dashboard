@@ -1,0 +1,183 @@
+:root {
+  --theme-sidebar-bg: #1f2440;
+  --theme-navbar-bg: #1f2440;
+  --theme-primary: #2f6fed;
+  --theme-primary-dark: #1f55c8;
+  --theme-primary-soft: rgba(47, 111, 237, 0.12);
+  --theme-page-bg: #f5f8ff;
+  --theme-card-bg: #ffffff;
+  --theme-card-header-bg: #f3f7ff;
+  --theme-border: #d9e2f3;
+  --theme-text-strong: #18223c;
+}
+
+[data-theme="ocean"] {
+  --theme-sidebar-bg: #1f2440;
+  --theme-navbar-bg: #1f2440;
+  --theme-primary: #2f6fed;
+  --theme-primary-dark: #1f55c8;
+  --theme-primary-soft: rgba(47, 111, 237, 0.12);
+  --theme-page-bg: #f5f8ff;
+  --theme-card-bg: #ffffff;
+  --theme-card-header-bg: #f3f7ff;
+  --theme-border: #d9e2f3;
+  --theme-text-strong: #18223c;
+}
+
+[data-theme="emerald"] {
+  --theme-sidebar-bg: #143129;
+  --theme-navbar-bg: #143129;
+  --theme-primary: #0f9f70;
+  --theme-primary-dark: #0c7a56;
+  --theme-primary-soft: rgba(15, 159, 112, 0.12);
+  --theme-page-bg: #f1fbf7;
+  --theme-card-bg: #ffffff;
+  --theme-card-header-bg: #edf9f3;
+  --theme-border: #cfe9dc;
+  --theme-text-strong: #17352d;
+}
+
+[data-theme="sunset"] {
+  --theme-sidebar-bg: #3d261b;
+  --theme-navbar-bg: #3d261b;
+  --theme-primary: #e77b2d;
+  --theme-primary-dark: #c45f18;
+  --theme-primary-soft: rgba(231, 123, 45, 0.12);
+  --theme-page-bg: #fff6ef;
+  --theme-card-bg: #ffffff;
+  --theme-card-header-bg: #fff0e4;
+  --theme-border: #f2dac7;
+  --theme-text-strong: #4f2f1c;
+}
+
+[data-theme="berry"] {
+  --theme-sidebar-bg: #341d33;
+  --theme-navbar-bg: #341d33;
+  --theme-primary: #bb3e8c;
+  --theme-primary-dark: #932f6e;
+  --theme-primary-soft: rgba(187, 62, 140, 0.14);
+  --theme-page-bg: #fdf3fa;
+  --theme-card-bg: #ffffff;
+  --theme-card-header-bg: #fae9f4;
+  --theme-border: #eccddd;
+  --theme-text-strong: #41233f;
+}
+
+.sidebar.bg-primary,
+.navbar-theme-primary {
+  background-color: var(--theme-sidebar-bg) !important;
+}
+
+.content,
+body {
+  background-color: var(--theme-page-bg) !important;
+}
+
+.card {
+  background-color: var(--theme-card-bg) !important;
+  border-color: var(--theme-border) !important;
+}
+
+.card-header {
+  background-color: var(--theme-card-header-bg) !important;
+  border-bottom-color: var(--theme-border) !important;
+}
+
+.table thead th {
+  background-color: var(--theme-card-header-bg) !important;
+  color: var(--theme-text-strong) !important;
+  border-bottom-color: var(--theme-border) !important;
+}
+
+.table td,
+.table th {
+  border-top-color: var(--theme-border) !important;
+}
+
+.form-control,
+.form-select {
+  border-color: var(--theme-border) !important;
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--theme-primary) !important;
+  box-shadow: 0 0 0 0.2rem var(--theme-primary-soft) !important;
+}
+
+.card h4,
+.card h5,
+.card h6 {
+  color: var(--theme-text-strong) !important;
+}
+
+.text-info {
+  color: var(--theme-primary) !important;
+}
+
+.content a:not(.btn):not(.nav-link):not(.dropdown-item),
+.content .btn-link {
+  color: var(--theme-primary) !important;
+}
+
+.sidebar .nav-link,
+.sidebar .sidebar-text,
+.sidebar small,
+.sidebar h5 {
+  color: rgba(255, 255, 255, 0.92) !important;
+}
+
+.sidebar .nav-item.active .nav-link {
+  color: #fff !important;
+  border: 1px solid color-mix(in srgb, var(--theme-primary) 40%, #ffffff 60%) !important;
+}
+
+.btn-primary {
+  background-color: var(--theme-primary) !important;
+  border-color: var(--theme-primary) !important;
+}
+
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:active {
+  background-color: var(--theme-primary-dark) !important;
+  border-color: var(--theme-primary-dark) !important;
+}
+
+.btn-outline-primary {
+  color: var(--theme-primary) !important;
+  border-color: var(--theme-primary) !important;
+}
+
+.btn-outline-primary:hover,
+.btn-outline-primary:focus,
+.btn-outline-primary:active {
+  color: #fff !important;
+  background-color: var(--theme-primary) !important;
+  border-color: var(--theme-primary) !important;
+}
+
+.text-primary {
+  color: var(--theme-primary) !important;
+}
+
+.nav-item.active .nav-link,
+.nav-link.active {
+  background-color: var(--theme-primary-soft) !important;
+}
+
+.form-check-input:checked {
+  background-color: var(--theme-primary) !important;
+  border-color: var(--theme-primary) !important;
+}
+
+.topbar-actions .theme-select {
+  min-width: 170px;
+  background: #fff !important;
+}
+
+.topbar-actions .btn-outline-primary {
+  white-space: nowrap;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}

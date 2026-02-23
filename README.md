@@ -148,7 +148,7 @@ Every component, plugin and getting started is thoroughly documented on our [onl
 Within the download you'll find the following directories and files:
 
 ```
-Volt React Dashboard
+Ingenious HR Dashboard
 .
 ├── LICENSE.md
 ├── README.md
