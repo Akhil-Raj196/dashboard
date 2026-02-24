@@ -8,6 +8,7 @@ export const Routes = {
   Profile: { path: "/profile" },
   Leave: { path: "/leave" },
   Salary: { path: "/salary" },
+  PayrollSetup: { path: "/payroll-setup" },
   Chat: { path: "/chat" },
   Notifications: { path: "/notifications" },
   AccessControl: { path: "/access-control" },

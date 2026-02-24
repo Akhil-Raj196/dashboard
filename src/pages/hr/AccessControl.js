@@ -10,6 +10,7 @@ const employeePermissionOptions = [
   "profile",
   "leave",
   "salary",
+  "payroll_admin",
   "chat",
   "notifications",
   "access",
@@ -61,7 +62,7 @@ export default function AccessControl() {
       ...prev,
       [userId]: {
         role,
-        permissions: role === "admin" ? ROLE_PERMISSIONS.admin : employeePermissionOptions
+        permissions: role === "admin" ? ROLE_PERMISSIONS.admin : ROLE_PERMISSIONS.employee
       }
     }));
   };

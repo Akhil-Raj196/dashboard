@@ -1,7 +1,7 @@
 {
-  "name": "@themesberg/volt-react-dashboard",
-  "description": "Volt React Dashboard is a free and open source admin dashboard template powered by React.js and Bootstrap 5",
+  "name": "@themesberg/ingenious-hr-portal",
   "author": "Themesberg",
+  "description": "Ingenious HR Portal is a free and open source admin dashboard template powered by React.js and Bootstrap 5",
   "keywords": [
     "bootstrap 5",
     "react",
@@ -15,13 +15,6 @@
   ],
   "license": "MIT",
   "homepage": "/ingeniousportal",
-  "bugs": {
-    "url": "https://github.com/themesberg/volt-react-dashboard/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/themesberg/volt-react-dashboard"
-  },
   "version": "1.0.1",
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^1.2.36",

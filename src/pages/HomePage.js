@@ -17,6 +17,7 @@ import Regularize from "./hr/Regularize";
 import Profile from "./hr/Profile";
 import Leave from "./hr/Leave";
 import Salary from "./hr/Salary";
+import PayrollSetup from "./hr/PayrollSetup";
 import Chat from "./hr/Chat";
 import Notifications from "./hr/Notifications";
 import AccessControl from "./hr/AccessControl";
@@ -65,6 +66,7 @@ export default function HomePage() {
       <GuardedRoute exact path={Routes.Profile.path} component={Profile} permission="profile" />
       <GuardedRoute exact path={Routes.Leave.path} component={Leave} permission="leave" />
       <GuardedRoute exact path={Routes.Salary.path} component={Salary} permission="salary" />
+      <GuardedRoute exact path={Routes.PayrollSetup.path} component={PayrollSetup} permission="payroll_admin" />
       <GuardedRoute exact path={Routes.Chat.path} component={Chat} permission="chat" />
       <GuardedRoute exact path={Routes.Notifications.path} component={Notifications} permission="notifications" />
       <GuardedRoute exact path={Routes.AccessControl.path} component={AccessControl} permission="access" />

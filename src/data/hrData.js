@@ -28,6 +28,7 @@ export const ROLE_PERMISSIONS = {
     "profile",
     "leave",
     "salary",
+    "payroll_admin",
     "chat",
     "notifications",
     "access",
@@ -264,7 +265,7 @@ export const INITIAL_ORGANIZATION_POSTS = [
     title: "Payroll Processing Notice",
     author: "Finance Team",
     createdAt: "2026-02-22T09:00:00.000Z",
-    summary: "Salary slips will be generated on the last working day of each month."
+    summary: "Salary slips are auto-generated on the 2nd day of each month for the previous month."
   },
   {
     id: "p3",

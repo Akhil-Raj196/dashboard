@@ -13,6 +13,12 @@ import {
   INITIAL_SALARY_SLIPS,
   ROLE_PERMISSIONS
 } from "../data/hrData";
+import {
+  computeSalarySlipForPeriod,
+  getCurrentMonthPeriod,
+  getPeriodKeyFromSlip,
+  getPreviousMonthPeriod
+} from "../utils/salarySlip";
 
 const STORAGE_KEY = "hr_portal_state_v1";
 const AVAILABLE_THEMES = [
@@ -97,6 +103,10 @@ const ensurePostShape = (post) => ({
 
 const ensureUserProfileShape = (user, fallback = {}) => {
   const merged = { ...fallback, ...user };
+  const resolvedName = merged.name || "";
+  const nameParts = resolvedName.trim().split(/\s+/).filter(Boolean);
+  const defaultFirst = nameParts[0] || "";
+  const defaultLast = nameParts.slice(1).join(" ");
   const permissions =
     merged.role === "admin"
       ? Array.from(new Set([...(merged.permissions || []), ...ROLE_PERMISSIONS.admin]))
@@ -148,7 +158,77 @@ const ensureUserProfileShape = (user, fallback = {}) => {
       nameOnPan: merged.verificationDocs?.nameOnPan || merged.name || "",
       aadharImage: merged.verificationDocs?.aadharImage || "",
       panImage: merged.verificationDocs?.panImage || ""
+    },
+    payrollDetails: {
+      firstName: merged.payrollDetails?.firstName || defaultFirst,
+      lastName: merged.payrollDetails?.lastName || defaultLast,
+      employeeCode: merged.payrollDetails?.employeeCode || personalDetails.employeeCode || "",
+      pfNumber: merged.payrollDetails?.pfNumber || "",
+      esiNumber: merged.payrollDetails?.esiNumber || "",
+      accountNumber: merged.payrollDetails?.accountNumber || "",
+      ifscCode: merged.payrollDetails?.ifscCode || "",
+      bankName: merged.payrollDetails?.bankName || "",
+      ctcAnnual: Number(merged.payrollDetails?.ctcAnnual || 0),
+      currency: merged.payrollDetails?.currency || "USD",
+      basicPct: Number(merged.payrollDetails?.basicPct || 40),
+      hraPct: Number(merged.payrollDetails?.hraPct || 20),
+      conveyanceFixed: Number(merged.payrollDetails?.conveyanceFixed || 0),
+      medicalFixed: Number(merged.payrollDetails?.medicalFixed || 0),
+      specialAllowanceFixed: Number(merged.payrollDetails?.specialAllowanceFixed || 0),
+      otherAllowanceFixed: Number(merged.payrollDetails?.otherAllowanceFixed || 0),
+      pfRate: Number(merged.payrollDetails?.pfRate || 12),
+      esiRate: Number(merged.payrollDetails?.esiRate || 0.75),
+      professionalTax: Number(merged.payrollDetails?.professionalTax || 200),
+      tds: Number(merged.payrollDetails?.tds || 0),
+      loanDeduction: Number(merged.payrollDetails?.loanDeduction || 0)
     }
+  };
+};
+
+const ensureMonthlySalarySlips = (sourceState, referenceDate = new Date()) => {
+  if (referenceDate.getDate() < 2) return sourceState;
+
+  const targetPeriod = getPreviousMonthPeriod(referenceDate);
+  const existingSlipKeys = new Set(
+    (sourceState.salarySlips || []).map((slip) => `${slip.userId}:${getPeriodKeyFromSlip(slip)}`)
+  );
+
+  const payrollUsers = (sourceState.users || []).filter((user) =>
+    (user.permissions || []).includes("salary")
+  );
+
+  const generatedOn = referenceDate.toISOString();
+  const newSlips = payrollUsers
+    .filter((user) => !existingSlipKeys.has(`${user.id}:${targetPeriod.key}`))
+    .map((user) =>
+      computeSalarySlipForPeriod({
+        user,
+        attendanceSessions: sourceState.attendanceSessions,
+        leaves: sourceState.leaves,
+        holidays: sourceState.holidays,
+        year: targetPeriod.year,
+        monthIndex: targetPeriod.monthIndex,
+        generatedAt: generatedOn
+      })
+    );
+
+  if (newSlips.length === 0) return sourceState;
+
+  const notifications = newSlips.map((slip) => ({
+    id: `n-${Date.now()}-salary-${slip.userId}-${Math.random().toString(36).slice(2, 6)}`,
+    userId: slip.userId,
+    title: "Salary Slip Generated",
+    message: `${slip.month} salary slip is available for download in your portal.`,
+    channel: "app",
+    status: "sent",
+    createdAt: generatedOn,
+    read: false
+  }));
+
+  return {
+    ...sourceState,
+    salarySlips: [...newSlips, ...(sourceState.salarySlips || [])],
+    notifications: [...notifications, ...(sourceState.notifications || [])]
   };
 };
 
@@ -206,6 +286,15 @@ export const AuthProvider = ({ children }) => {
     const nextTheme = state.uiTheme || "ocean";
     document.documentElement.setAttribute("data-theme", nextTheme);
   }, [state.uiTheme]);
+
+  useEffect(() => {
+    setState((prev) => {
+      const nextState = ensureMonthlySalarySlips(prev, new Date());
+      if (nextState === prev) return prev;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+      return nextState;
+    });
+  }, []);
 
   const currentUser = useMemo(
     () => state.users.find((u) => u.id === state.currentUserId) || null,
@@ -265,11 +354,11 @@ export const AuthProvider = ({ children }) => {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const location = inferLocationFromTimezone(timezone);
 
-    const nextState = {
+    const nextState = ensureMonthlySalarySlips({
       ...state,
       currentUserId: user.id,
       activityLogs: [createLogEntry("LOGIN", user, timezone, location), ...state.activityLogs]
-    };
+    }, new Date());
 
     persist(nextState);
     return { success: true };
@@ -293,12 +382,12 @@ export const AuthProvider = ({ children }) => {
       item.token === token ? { ...item, used: true, usedAt: new Date().toISOString() } : item
     );
 
-    const nextState = {
+    const nextState = ensureMonthlySalarySlips({
       ...state,
       currentUserId: user.id,
       inviteLinks: nextInviteLinks,
       activityLogs: [createLogEntry("LOGIN", user, timezone, location), ...state.activityLogs]
-    };
+    }, new Date());
 
     persist(nextState);
     return { success: true };
@@ -752,7 +841,7 @@ export const AuthProvider = ({ children }) => {
     email,
     department,
     designation,
-    permissions = ["dashboard", "attendance", "profile", "leave", "salary", "chat", "notifications"]
+    permissions = ROLE_PERMISSIONS.employee
   }) => {
     if (!currentUser) return { success: false, message: "Unauthorized request." };
     if (state.users.some((user) => user.email.toLowerCase() === email.toLowerCase())) {
@@ -860,6 +949,86 @@ export const AuthProvider = ({ children }) => {
     });
 
     persist({ ...state, users });
+  };
+
+  const updateEmployeePayroll = (userId, payrollInput) => {
+    if (!currentUser) return { success: false, message: "User not logged in." };
+    if (!(currentUser.role === "admin" || hasPermission("access"))) {
+      return { success: false, message: "Only HR/Admin can update payroll details." };
+    }
+
+    const targetUser = state.users.find((u) => u.id === userId);
+    if (!targetUser) return { success: false, message: "Employee not found." };
+
+    const mergedPayroll = {
+      ...targetUser.payrollDetails,
+      ...payrollInput,
+      ctcAnnual: Number(payrollInput.ctcAnnual || 0),
+      basicPct: Number(payrollInput.basicPct ?? targetUser.payrollDetails?.basicPct ?? 40),
+      hraPct: Number(payrollInput.hraPct ?? targetUser.payrollDetails?.hraPct ?? 20),
+      conveyanceFixed: Number(payrollInput.conveyanceFixed ?? targetUser.payrollDetails?.conveyanceFixed ?? 0),
+      medicalFixed: Number(payrollInput.medicalFixed ?? targetUser.payrollDetails?.medicalFixed ?? 0),
+      specialAllowanceFixed: Number(payrollInput.specialAllowanceFixed ?? targetUser.payrollDetails?.specialAllowanceFixed ?? 0),
+      otherAllowanceFixed: Number(payrollInput.otherAllowanceFixed ?? targetUser.payrollDetails?.otherAllowanceFixed ?? 0),
+      pfRate: Number(payrollInput.pfRate ?? targetUser.payrollDetails?.pfRate ?? 12),
+      esiRate: Number(payrollInput.esiRate ?? targetUser.payrollDetails?.esiRate ?? 0.75),
+      professionalTax: Number(payrollInput.professionalTax ?? targetUser.payrollDetails?.professionalTax ?? 200),
+      tds: Number(payrollInput.tds ?? targetUser.payrollDetails?.tds ?? 0),
+      loanDeduction: Number(payrollInput.loanDeduction ?? targetUser.payrollDetails?.loanDeduction ?? 0)
+    };
+
+    const fullName = `${(mergedPayroll.firstName || "").trim()} ${(mergedPayroll.lastName || "").trim()}`.trim();
+
+    const users = state.users.map((user) => {
+      if (user.id !== userId) return user;
+      return ensureUserProfileShape({
+        ...user,
+        name: fullName || user.name,
+        payrollDetails: mergedPayroll,
+        personalDetails: {
+          ...user.personalDetails,
+          employeeCode: mergedPayroll.employeeCode || user.personalDetails?.employeeCode || ""
+        }
+      });
+    });
+    const updatedUser = users.find((user) => user.id === userId);
+    const now = new Date();
+    const currentPeriod = getCurrentMonthPeriod(now);
+    const generatedSlip = computeSalarySlipForPeriod({
+      user: updatedUser,
+      attendanceSessions: state.attendanceSessions,
+      leaves: state.leaves,
+      holidays: state.holidays,
+      year: currentPeriod.year,
+      monthIndex: currentPeriod.monthIndex,
+      generatedAt: now.toISOString()
+    });
+    const salarySlips = [
+      generatedSlip,
+      ...state.salarySlips.filter(
+        (slip) => !(slip.userId === userId && getPeriodKeyFromSlip(slip) === currentPeriod.key)
+      )
+    ];
+
+    const notification = {
+      id: `n-${Date.now()}-payroll-update`,
+      userId,
+      title: "Payroll profile updated",
+      message: "HR updated your salary profile and generated this month salary slip.",
+      channel: "app",
+      status: "sent",
+      createdAt: new Date().toISOString(),
+      read: false
+    };
+
+    persist({
+      ...state,
+      users,
+      salarySlips,
+      notifications: [notification, ...state.notifications]
+    });
+
+    return { success: true };
   };
 
   const submitRegularizationRequest = ({ date, reason, recipientUserId = null }) => {
@@ -1145,7 +1314,8 @@ export const AuthProvider = ({ children }) => {
     deleteEducationEntry,
     deleteVerificationDocument,
     createEmployeeInvite,
-    loginWithInvite
+    loginWithInvite,
+    updateEmployeePayroll
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

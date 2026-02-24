@@ -37,7 +37,8 @@ export default function Sidebar() {
     { title: "Regularize", path: Routes.Regularize.path, icon: faUserCheck, permission: "regularize" },
     { title: "Profile", path: Routes.Profile.path, icon: faIdBadge, permission: "profile" },
     { title: "Leave", path: Routes.Leave.path, icon: faCalendarCheck, permission: "leave" },
-    { title: "Salary Slips", path: Routes.Salary.path, icon: faMoneyCheckAlt, permission: "salary" },
+    { title: "Salary Slip", path: Routes.Salary.path, icon: faMoneyCheckAlt, permission: "salary" },
+    { title: "Payroll Setup", path: Routes.PayrollSetup.path, icon: faMoneyCheckAlt, permission: "payroll_admin" },
     { title: "Messages / Chat", path: Routes.Chat.path, icon: faComments, permission: "chat" },
     { title: "Notifications", path: Routes.Notifications.path, icon: faBell, permission: "notifications" },
     { title: "Access Control", path: Routes.AccessControl.path, icon: faUserCog, permission: "access" }

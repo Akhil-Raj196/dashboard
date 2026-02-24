@@ -5,6 +5,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEnvelope, faUnlockAlt } from "@fortawesome/free-solid-svg-icons";
 import { useAuth } from "../../context/AuthContext";
 import { Routes } from "../../routes";
+import SideWallImage from "../../assets/img/brand/sidewallimage.jpeg";
 
 export default function Login() {
   const { currentUser, login } = useAuth();
@@ -25,12 +26,17 @@ export default function Login() {
   };
 
   return (
-    <main>
-      <section className="d-flex align-items-center my-5 mt-lg-6 mb-lg-5">
-        <Container>
-          <Row className="justify-content-center">
-            <Col xs={12} md={8} lg={6}>
-              <Card className="shadow border-light p-4">
+    <main className="hr-login-layout">
+      <section
+        className="hr-login-image-panel"
+        aria-label="Office wall image"
+        style={{ backgroundImage: `url(${SideWallImage})` }}
+      />
+      <section className="hr-login-form-panel">
+        <Container fluid className="h-100 d-flex align-items-center justify-content-center px-3 px-md-4">
+          <Row className="justify-content-center w-100">
+            <Col xs={12} xl={9}>
+              <Card className="shadow border-light p-4 p-md-5">
                 <Card.Body>
                   <h3 className="mb-3">Ingenious Portal Login</h3>
                   <p className="text-gray mb-4">Sign in with your role-based account.</p>

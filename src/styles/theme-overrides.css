@@ -181,3 +181,41 @@ body {
   padding-left: 0.75rem;
   padding-right: 0.75rem;
 }
+
+.hr-login-layout {
+  min-height: 100vh;
+  display: flex;
+  background: #f3f7f7;
+}
+
+.hr-login-image-panel {
+  flex: 1 1 52%;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+.hr-login-form-panel {
+  flex: 1 1 48%;
+  display: flex;
+  background: #f3f7f7;
+}
+
+.hr-login-form-panel .card {
+  width: 100%;
+  max-width: 620px;
+}
+
+@media (max-width: 991.98px) {
+  .hr-login-layout {
+    flex-direction: column;
+  }
+
+  .hr-login-image-panel {
+    min-height: 220px;
+  }
+
+  .hr-login-form-panel {
+    padding: 1rem 0 2rem;
+  }
+}
