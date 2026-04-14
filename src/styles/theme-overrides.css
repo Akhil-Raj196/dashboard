@@ -212,10 +212,11 @@ body {
   }
 
   .hr-login-image-panel {
-    min-height: 220px;
+    display: none;
   }
 
   .hr-login-form-panel {
+    flex: 1 1 100%;
     padding: 1rem 0 2rem;
   }
 }
