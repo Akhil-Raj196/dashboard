@@ -1,19 +1,16 @@
 import React, { useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Form, Row } from "@themesberg/react-bootstrap";
 import { useAuth } from "../../context/AuthContext";
-
-const readFileAsDataUrl = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+import {
+  ALLOWED_DOCUMENT_MIME_TYPES,
+  isPdfDataUrl,
+  readFileAsDataUrl,
+  validateFileType
+} from "../../utils/fileUploads";
 
 const resolveAttachmentType = (mimeType = "") => {
   if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("video/")) return "video";
-  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType === "application/pdf") return "pdf";
   return "file";
 };
 
@@ -39,16 +36,23 @@ export default function CompanyPosts() {
 
     const next = [];
     for (const file of files) {
+      const validation = validateFileType(file, ALLOWED_DOCUMENT_MIME_TYPES);
+      if (!validation.valid) {
+        setError(validation.message);
+        return;
+      }
+
       const dataUrl = await readFileAsDataUrl(file);
       next.push({
         id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        type: resolveAttachmentType(file.type),
-        mimeType: file.type,
+        type: resolveAttachmentType(validation.mimeType),
+        mimeType: validation.mimeType,
         name: file.name,
         url: dataUrl
       });
     }
 
+    setError("");
     setAttachments((prev) => [...prev, ...next]);
   };
 
@@ -56,12 +60,12 @@ export default function CompanyPosts() {
     setAttachments((prev) => prev.filter((item) => item.id !== attachmentId));
   };
 
-  const onSubmitPost = (event) => {
+  const onSubmitPost = async (event) => {
     event.preventDefault();
     setError("");
     setSuccess("");
 
-    const response = createCompanyPost({ title, message, attachments });
+    const response = await createCompanyPost({ title, message, attachments });
     if (!response.success) {
       setError(response.message || "Unable to create post.");
       return;
@@ -112,8 +116,8 @@ export default function CompanyPosts() {
               </Form.Group>
 
               <Form.Group className="mb-3">
-                <Form.Label>Attach Image / Audio / Video</Form.Label>
-                <Form.Control type="file" accept="image/*,audio/*,video/*" multiple onChange={onUploadFiles} />
+                <Form.Label>Attach JPEG / PNG / PDF</Form.Label>
+                <Form.Control type="file" accept=".jpeg,.jpg,.png,.pdf,image/jpeg,image/png,application/pdf" multiple onChange={onUploadFiles} />
               </Form.Group>
 
               {attachments.length > 0 ? (
@@ -126,10 +130,11 @@ export default function CompanyPosts() {
                           {attachment.type === "image" ? (
                             <img src={attachment.url} alt={attachment.name} style={{ width: "100%", borderRadius: 6 }} />
                           ) : null}
-                          {attachment.type === "video" ? (
-                            <video src={attachment.url} controls style={{ width: "100%", borderRadius: 6 }} />
+                          {attachment.type === "pdf" || isPdfDataUrl(attachment.url) ? (
+                            <a href={attachment.url} target="_blank" rel="noopener noreferrer">
+                              View PDF
+                            </a>
                           ) : null}
-                          {attachment.type === "audio" ? <audio src={attachment.url} controls style={{ width: "100%" }} /> : null}
                           <Button size="sm" variant="outline-danger" className="mt-2" onClick={() => removeAttachment(attachment.id)}>
                             Remove
                           </Button>
@@ -182,11 +187,10 @@ export default function CompanyPosts() {
                             {attachment.type === "image" ? (
                               <img src={attachment.url} alt={attachment.name} style={{ width: "100%", borderRadius: 6 }} />
                             ) : null}
-                            {attachment.type === "video" ? (
-                              <video src={attachment.url} controls style={{ width: "100%", borderRadius: 6 }} />
-                            ) : null}
-                            {attachment.type === "audio" ? (
-                              <audio src={attachment.url} controls style={{ width: "100%" }} />
+                            {attachment.type === "pdf" || isPdfDataUrl(attachment.url) ? (
+                              <a href={attachment.url} target="_blank" rel="noopener noreferrer">
+                                {attachment.name || "Open PDF"}
+                              </a>
                             ) : null}
                           </Col>
                         ))}

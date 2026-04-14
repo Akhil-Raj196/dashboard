@@ -1,6 +1,7 @@
 export const Routes = {
   Login: { path: "/" },
   InviteSignin: { path: "/invite/:token" },
+  ChangePassword: { path: "/change-password" },
   HRDashboard: { path: "/dashboard" },
   CompanyPosts: { path: "/company-posts" },
   Attendance: { path: "/attendance" },

@@ -9,6 +9,12 @@ export default function Chat() {
   const [selectedUser, setSelectedUser] = useState(availableUsers[0]?.id || "");
   const [message, setMessage] = useState("");
 
+  React.useEffect(() => {
+    if (!selectedUser && availableUsers[0]?.id) {
+      setSelectedUser(availableUsers[0].id);
+    }
+  }, [availableUsers, selectedUser]);
+
   const activeChat = useMemo(() => {
     return chats.find((chat) =>
       chat.participants.includes(currentUser.id) && chat.participants.includes(selectedUser)
@@ -23,11 +29,13 @@ export default function Chat() {
     return map;
   }, [users]);
 
-  const onSend = (event) => {
+  const onSend = async (event) => {
     event.preventDefault();
     if (!selectedUser) return;
-    sendChatMessage(selectedUser, message);
-    setMessage("");
+    const result = await sendChatMessage(selectedUser, message);
+    if (result.success) {
+      setMessage("");
+    }
   };
 
   return (

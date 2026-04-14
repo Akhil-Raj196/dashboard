@@ -45,6 +45,7 @@ export default function Dashboard() {
   const [commentDrafts, setCommentDrafts] = useState({});
   const [attendanceActionMessage, setAttendanceActionMessage] = useState("");
   const [now, setNow] = useState(Date.now());
+  const [selectedDesignation, setSelectedDesignation] = useState("all");
 
   const today = new Date();
   const todayString = toDateString(today);
@@ -62,12 +63,27 @@ export default function Dashboard() {
     return map;
   }, [users]);
 
-  const attendanceScopeUserIds = useMemo(() => {
+  const designationOptions = useMemo(
+    () => Array.from(new Set(users.map((user) => user.designation).filter(Boolean))).sort(),
+    [users]
+  );
+
+  const visibleUsers = useMemo(() => {
     if (currentUser.role === "admin") {
-      return users.map((user) => user.id);
+      return selectedDesignation === "all"
+        ? users
+        : users.filter((user) => user.designation === selectedDesignation);
     }
-    return users.filter((user) => user.department === "IT").map((user) => user.id);
-  }, [currentUser.role, users]);
+
+    return users.filter((user) => {
+      if (selectedDesignation !== "all" && user.designation !== selectedDesignation) return false;
+      return user.id === currentUser.id || user.designation === currentUser.designation || user.department === currentUser.department;
+    });
+  }, [currentUser, users, selectedDesignation]);
+
+  const attendanceScopeUserIds = useMemo(() => {
+    return visibleUsers.map((user) => user.id);
+  }, [visibleUsers]);
 
   const todayAttendance = attendance.filter(
     (record) => record.date === todayString && attendanceScopeUserIds.includes(record.userId)
@@ -79,14 +95,14 @@ export default function Dashboard() {
 
   const onLeaveToday = leaves.filter((leave) => {
     if (leave.status !== "Approved") return false;
-    return leave.fromDate <= todayString && leave.toDate >= todayString;
+    return leave.fromDate <= todayString && leave.toDate >= todayString && attendanceScopeUserIds.includes(leave.userId);
   });
 
   const selfPendingLeaves = leaves.filter(
     (leave) => leave.userId === currentUser.id && leave.status === "Pending"
   ).length;
 
-  const birthdayWithDays = users
+  const birthdayWithDays = visibleUsers
     .map((user) => ({
       ...user,
       days: getDaysUntilBirthday(user.dob, today)
@@ -98,7 +114,7 @@ export default function Dashboard() {
 
   const attendanceHeading = currentUser.role === "admin"
     ? "Organization Attendance Today"
-    : "IT Department Attendance Today";
+    : "Team Attendance Today";
 
   const myTodaySessions = useMemo(
     () =>
@@ -116,8 +132,8 @@ export default function Dashboard() {
     ? Math.max(Math.floor((now - new Date(activeSession.clockIn).getTime()) / 60000), 0)
     : 0;
 
-  const onAttendanceAction = () => {
-    const result = hasOpenSession ? attendanceClockOut() : attendanceClockIn();
+  const onAttendanceAction = async () => {
+    const result = hasOpenSession ? await attendanceClockOut() : await attendanceClockIn();
     setNow(Date.now());
     setAttendanceActionMessage(result.success
       ? (hasOpenSession ? "Work session ended and time recorded." : "Work session started.")
@@ -134,6 +150,15 @@ export default function Dashboard() {
             Welcome, {currentUser.name}. {currentUser.role === "admin" ? "Admin view" : "Employee view"}.
           </p>
         </div>
+        <div style={{ minWidth: 280 }}>
+          <Form.Label className="small text-gray mb-1">Designation Filter</Form.Label>
+          <Form.Select value={selectedDesignation} onChange={(e) => setSelectedDesignation(e.target.value)}>
+            <option value="all">All Designations</option>
+            {designationOptions.map((designation) => (
+              <option key={designation} value={designation}>{designation}</option>
+            ))}
+          </Form.Select>
+        </div>
       </div>
 
       <Row>
@@ -142,7 +167,11 @@ export default function Dashboard() {
             <Card.Body>
               <h6>Employees Present Today</h6>
               <h3>{presentCount}</h3>
-              <small className="text-gray">Scope: {currentUser.role === "admin" ? "Organization" : "IT Department"}</small>
+              <small className="text-gray">
+                Scope: {currentUser.role === "admin"
+                  ? (selectedDesignation === "all" ? "Organization" : selectedDesignation)
+                  : (selectedDesignation === "all" ? "My Team" : selectedDesignation)}
+              </small>
             </Card.Body>
           </Card>
         </Col>
@@ -343,15 +372,10 @@ export default function Dashboard() {
                                   style={{ width: "100%", maxHeight: 220, objectFit: "cover", borderRadius: 6 }}
                                 />
                               ) : null}
-                              {attachment.type === "video" ? (
-                                <video
-                                  src={attachment.url}
-                                  controls
-                                  style={{ width: "100%", maxHeight: 260, borderRadius: 6 }}
-                                />
-                              ) : null}
-                              {attachment.type === "audio" ? (
-                                <audio src={attachment.url} controls style={{ width: "100%" }} />
+                              {attachment.type === "pdf" ? (
+                                <a href={attachment.url} target="_blank" rel="noopener noreferrer">
+                                  {attachment.name || "Open PDF"}
+                                </a>
                               ) : null}
                             </div>
                           ))}
@@ -362,7 +386,9 @@ export default function Dashboard() {
                         <Button
                           size="sm"
                           variant={(post.likes || []).includes(currentUser.id) ? "primary" : "outline-primary"}
-                          onClick={() => togglePostLike(post.id)}
+                          onClick={async () => {
+                            await togglePostLike(post.id);
+                          }}
                         >
                           {(post.likes || []).includes(currentUser.id) ? "Unlike" : "Like"} ({(post.likes || []).length})
                         </Button>
@@ -380,12 +406,14 @@ export default function Dashboard() {
                         ) : null}
 
                         <Form
-                          onSubmit={(event) => {
+                          onSubmit={async (event) => {
                             event.preventDefault();
                             const value = commentDrafts[post.id] || "";
                             if (!value.trim()) return;
-                            addPostComment(post.id, value);
-                            setCommentDrafts((prev) => ({ ...prev, [post.id]: "" }));
+                            const result = await addPostComment(post.id, value);
+                            if (result.success) {
+                              setCommentDrafts((prev) => ({ ...prev, [post.id]: "" }));
+                            }
                           }}
                         >
                           <div className="d-flex gap-2">

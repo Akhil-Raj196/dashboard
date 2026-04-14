@@ -10,10 +10,10 @@ export default function Notifications() {
     (notification) => currentUser.role === "admin" || notification.userId === currentUser.id
   );
 
-  const openNotification = (notification) => {
+  const openNotification = async (notification) => {
     setActiveNotification(notification);
     if (!notification.read) {
-      markNotificationRead(notification.id);
+      await markNotificationRead(notification.id);
     }
   };
 
@@ -57,7 +57,13 @@ export default function Notifications() {
                     {notification.read ? (
                       <Badge bg="success">Read</Badge>
                     ) : (
-                      <Button size="sm" variant="outline-primary" onClick={() => markNotificationRead(notification.id)}>
+                      <Button
+                        size="sm"
+                        variant="outline-primary"
+                        onClick={async () => {
+                          await markNotificationRead(notification.id);
+                        }}
+                      >
                         Mark Read
                       </Button>
                     )}

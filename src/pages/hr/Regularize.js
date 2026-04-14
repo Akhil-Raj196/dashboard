@@ -32,8 +32,8 @@ export default function Regularize() {
 
   const canRegularize = currentUser.role === "admin" || /hr/i.test(currentUser.designation || "");
 
-  const approveRequest = (request) => {
-    const result = regularizeAttendance({
+  const approveRequest = async (request) => {
+    const result = await regularizeAttendance({
       userId: request.userId,
       date: request.date,
       requestId: request.id,
@@ -43,9 +43,9 @@ export default function Regularize() {
     if (result.success) setAdminComment("");
   };
 
-  const manualRegularize = (event) => {
+  const manualRegularize = async (event) => {
     event.preventDefault();
-    const result = regularizeAttendance({
+    const result = await regularizeAttendance({
       userId: selectedEmployeeId,
       date: selectedDate,
       comment: adminComment || "Manual regularization by HR"

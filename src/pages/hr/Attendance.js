@@ -75,11 +75,28 @@ export default function Attendance() {
   const [selectedRecipientId, setSelectedRecipientId] = useState("");
   const [regularizeReason, setRegularizeReason] = useState("");
   const [regularizeMessage, setRegularizeMessage] = useState("");
+  const [selectedDesignation, setSelectedDesignation] = useState("all");
+
+  const designationOptions = useMemo(
+    () => Array.from(new Set(users.map((user) => user.designation).filter(Boolean))).sort(),
+    [users]
+  );
 
   const scopedUsers = useMemo(() => {
-    if (currentUser.role === "admin") return users;
-    return users.filter((user) => user.department === currentUser.department);
-  }, [currentUser, users]);
+    if (currentUser.role === "admin") {
+      return selectedDesignation === "all"
+        ? users
+        : users.filter((user) => user.designation === selectedDesignation);
+    }
+
+    const visibleUsers = users.filter((user) => {
+      if (user.id === currentUser.id) return true;
+      if (selectedDesignation !== "all" && user.designation !== selectedDesignation) return false;
+      return user.designation === currentUser.designation || user.department === currentUser.department;
+    });
+
+    return visibleUsers;
+  }, [currentUser, users, selectedDesignation]);
 
   const monthDates = useMemo(() => getMonthDates(), []);
 
@@ -168,9 +185,9 @@ export default function Attendance() {
 
   const monthTitle = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
-  const onRegularizeSubmit = (event) => {
+  const onRegularizeSubmit = async (event) => {
     event.preventDefault();
-    const result = submitRegularizationRequest({
+    const result = await submitRegularizationRequest({
       date: selectedDate,
       reason: regularizeReason,
       recipientUserId: selectedRecipientId || null
@@ -192,8 +209,18 @@ export default function Attendance() {
         </Card.Header>
         <Card.Body>
           <p className="small text-gray mb-3">
-            Full Day: 9 hours (including lunch) | Half Day: 5 hours | Admin sees all departments, employee sees own department.
+            Full Day: 9 hours (including lunch) | Half Day: 5 hours | Employees can review their designation or department peers.
           </p>
+
+          <div className="mb-3" style={{ maxWidth: 320 }}>
+            <Form.Label>Filter By Designation</Form.Label>
+            <Form.Select value={selectedDesignation} onChange={(e) => setSelectedDesignation(e.target.value)}>
+              <option value="all">All Designations</option>
+              {designationOptions.map((designation) => (
+                <option key={designation} value={designation}>{designation}</option>
+              ))}
+            </Form.Select>
+          </div>
 
           <div className="mb-3">
             <Button

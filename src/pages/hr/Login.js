@@ -9,17 +9,17 @@ import SideWallImage from "../../assets/img/brand/sidewallimage.jpeg";
 
 export default function Login() {
   const { currentUser, login } = useAuth();
-  const [email, setEmail] = useState("admin@hrportal.com");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   if (currentUser) {
     return <Redirect to={Routes.HRDashboard.path} />;
   }
 
-  const onSubmit = (event) => {
+  const onSubmit = async (event) => {
     event.preventDefault();
-    const result = login(email, password);
+    const result = await login(email, password);
     if (!result.success) {
       setError(result.message);
     }
@@ -55,7 +55,7 @@ export default function Login() {
                           type="email"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
-                          placeholder="admin@hrportal.com"
+                          placeholder="Enter your work email"
                         />
                       </InputGroup>
                     </Form.Group>
@@ -81,10 +81,6 @@ export default function Login() {
                     </Button>
                   </Form>
 
-                  <hr />
-                  <p className="mb-1"><strong>Demo credentials:</strong></p>
-                  <p className="mb-1">Admin: <code>admin@hrportal.com</code> / <code>admin123</code></p>
-                  <p className="mb-0">Employee: <code>employee@hrportal.com</code> / <code>emp123</code></p>
                 </Card.Body>
               </Card>
             </Col>

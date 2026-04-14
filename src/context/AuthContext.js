@@ -1,26 +1,25 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import {
-  HR_USERS,
-  INITIAL_ACTIVITY_LOGS,
-  INITIAL_ATTENDANCE,
-  INITIAL_ATTENDANCE_SESSIONS,
-  INITIAL_CHATS,
-  INITIAL_HOLIDAYS,
-  INITIAL_LEAVES,
-  INITIAL_NOTIFICATIONS,
-  INITIAL_ORGANIZATION_POSTS,
-  INITIAL_REGULARIZATION_REQUESTS,
-  INITIAL_SALARY_SLIPS,
-  ROLE_PERMISSIONS
-} from "../data/hrData";
-import {
-  computeSalarySlipForPeriod,
-  getCurrentMonthPeriod,
-  getPeriodKeyFromSlip,
-  getPreviousMonthPeriod
-} from "../utils/salarySlip";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { hrApi } from "../utils/hrApi";
 
-const STORAGE_KEY = "hr_portal_state_v1";
+const SESSION_USER_KEY = "hr_portal_current_user_id";
+const THEME_KEY = "hr_portal_ui_theme";
+const DEFAULT_ROLE_PERMISSIONS = {
+  admin: [
+    "dashboard",
+    "attendance",
+    "regularize",
+    "profile",
+    "leave",
+    "salary",
+    "payroll_admin",
+    "chat",
+    "notifications",
+    "access",
+    "company_posts"
+  ],
+  employee: ["dashboard", "attendance", "profile", "leave", "salary", "chat", "notifications"]
+};
+
 const AVAILABLE_THEMES = [
   { key: "ocean", label: "Ocean Blue" },
   { key: "emerald", label: "Emerald Green" },
@@ -29,70 +28,40 @@ const AVAILABLE_THEMES = [
 ];
 
 const baseState = {
-  currentUserId: null,
-  users: HR_USERS,
-  attendance: INITIAL_ATTENDANCE,
-  attendanceSessions: INITIAL_ATTENDANCE_SESSIONS,
-  holidays: INITIAL_HOLIDAYS,
-  regularizationRequests: INITIAL_REGULARIZATION_REQUESTS,
-  leaves: INITIAL_LEAVES,
-  organizationPosts: INITIAL_ORGANIZATION_POSTS,
-  salarySlips: INITIAL_SALARY_SLIPS,
-  notifications: INITIAL_NOTIFICATIONS,
-  chats: INITIAL_CHATS,
-  activityLogs: INITIAL_ACTIVITY_LOGS,
+  currentUserId: localStorage.getItem(SESSION_USER_KEY),
+  users: [],
+  attendance: [],
+  attendanceSessions: [],
+  holidays: [],
+  regularizationRequests: [],
+  leaves: [],
+  organizationPosts: [],
+  salarySlips: [],
+  notifications: [],
+  chats: [],
+  activityLogs: [],
   inviteLinks: [],
-  uiTheme: "ocean"
+  meta: {
+    rolePermissions: DEFAULT_ROLE_PERMISSIONS,
+    permissionOptions: DEFAULT_ROLE_PERMISSIONS.admin,
+    leaveTypes: [],
+    dayTypes: [],
+    attendanceStatuses: [],
+    workDayTypes: [],
+    roleOptions: ["employee", "admin"],
+    currencyOptions: [],
+    departments: [],
+    designations: []
+  },
+  uiTheme: localStorage.getItem(THEME_KEY) || "ocean"
 };
 
 const AuthContext = createContext(null);
 
-const inferLocationFromTimezone = (timezone) => {
-  if (!timezone) return "Unknown location";
-  const parts = timezone.split("/");
-  if (parts.length < 2) return timezone;
-  return `${parts[1].replace(/_/g, " ")}, ${parts[0]}`;
+const hasValue = (value) => {
+  if (typeof value === "string") return value.trim().length > 0;
+  return value !== null && value !== undefined;
 };
-
-const createLogEntry = (action, user, timezone, location) => ({
-  id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-  action,
-  userId: user.id,
-  userName: user.name,
-  timezone,
-  location,
-  timestamp: new Date().toISOString()
-});
-
-const toDateString = (date) => {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const calculateLeaveDays = (fromDate, toDate, dayType = "Full Day") => {
-  if (!fromDate || !toDate) return 0;
-  const start = new Date(fromDate);
-  const end = new Date(toDate);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
-
-  const millis = end.setHours(0, 0, 0, 0) - start.setHours(0, 0, 0, 0);
-  const dayCount = Math.floor(millis / (1000 * 60 * 60 * 24)) + 1;
-
-  if (dayType === "Half Day") return 0.5;
-  return dayCount;
-};
-
-const getApprovalRoleLabel = (user) => {
-  if (!user) return "Approver";
-  if (user.role === "admin") return "HR";
-  if (/manager/i.test(user.designation || "")) return "Manager";
-  if (/senior/i.test(user.designation || "")) return "Senior";
-  return "Approver";
-};
-
-const createInviteToken = () => `inv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 const ensurePostShape = (post) => ({
   ...post,
@@ -101,413 +70,257 @@ const ensurePostShape = (post) => ({
   comments: Array.isArray(post.comments) ? post.comments : []
 });
 
-const ensureUserProfileShape = (user, fallback = {}) => {
-  const merged = { ...fallback, ...user };
-  const resolvedName = merged.name || "";
+const ensureUserProfileShape = (user = {}) => {
+  const resolvedName = user.name || "";
   const nameParts = resolvedName.trim().split(/\s+/).filter(Boolean);
   const defaultFirst = nameParts[0] || "";
   const defaultLast = nameParts.slice(1).join(" ");
+  const rolePermissions = DEFAULT_ROLE_PERMISSIONS;
   const permissions =
-    merged.role === "admin"
-      ? Array.from(new Set([...(merged.permissions || []), ...ROLE_PERMISSIONS.admin]))
-      : Array.from(new Set([...(merged.permissions || []), ...ROLE_PERMISSIONS.employee]));
-  const defaultEducation = merged.education
-    ? [
-        {
-          id: `edu-default-${merged.id}`,
-          degree: merged.education,
-          institution: "",
-          year: "",
-          score: ""
-        }
-      ]
-    : [];
+    user.role === "admin"
+      ? Array.from(new Set([...(user.permissions || []), ...rolePermissions.admin]))
+      : Array.from(new Set([...(user.permissions || []), ...rolePermissions.employee]));
 
   const personalDetails = {
-    dob: merged.personalDetails?.dob || merged.dob || "",
-    gender: merged.personalDetails?.gender || "",
-    maritalStatus: merged.personalDetails?.maritalStatus || "",
-    bloodGroup: merged.personalDetails?.bloodGroup || "",
-    nationality: merged.personalDetails?.nationality || "Indian",
-    address: merged.personalDetails?.address || "",
-    city: merged.personalDetails?.city || "",
-    state: merged.personalDetails?.state || "",
-    postalCode: merged.personalDetails?.postalCode || "",
-    emergencyContactName: merged.personalDetails?.emergencyContactName || "",
-    emergencyContactPhone: merged.personalDetails?.emergencyContactPhone || "",
-    joiningDate: merged.personalDetails?.joiningDate || "",
-    employeeCode: merged.personalDetails?.employeeCode || `${(merged.department || "EMP").slice(0, 3).toUpperCase()}-${merged.id?.toUpperCase()}`
+    dob: user.personalDetails?.dob || user.dob || "",
+    gender: user.personalDetails?.gender || "",
+    maritalStatus: user.personalDetails?.maritalStatus || "",
+    bloodGroup: user.personalDetails?.bloodGroup || "",
+    nationality: user.personalDetails?.nationality || "Indian",
+    address: user.personalDetails?.address || "",
+    city: user.personalDetails?.city || "",
+    state: user.personalDetails?.state || "",
+    postalCode: user.personalDetails?.postalCode || "",
+    emergencyContactName: user.personalDetails?.emergencyContactName || "",
+    emergencyContactPhone: user.personalDetails?.emergencyContactPhone || "",
+    joiningDate: user.personalDetails?.joiningDate || "",
+    employeeCode:
+      user.personalDetails?.employeeCode ||
+      `${(user.department || "EMP").slice(0, 3).toUpperCase()}-${(user.id || "NEW").toUpperCase()}`
   };
 
   return {
-    ...merged,
+    ...user,
+    passwordChangeRequired: Boolean(user.passwordChangeRequired),
     permissions,
-    dob: merged.dob || personalDetails.dob,
-    phone: merged.phone || "",
-    location: merged.location || "",
-    managerId: merged.managerId || null,
+    dob: user.dob || personalDetails.dob,
+    phone: user.phone || "",
+    location: user.location || "",
+    managerId: user.managerId || null,
     personalDetails,
-    educationDetails:
-      Array.isArray(merged.educationDetails) && merged.educationDetails.length > 0
-        ? merged.educationDetails
-        : defaultEducation,
+    educationDetails: Array.isArray(user.educationDetails) ? user.educationDetails : [],
     verificationDocs: {
-      aadharNumber: merged.verificationDocs?.aadharNumber || "",
-      panNumber: merged.verificationDocs?.panNumber || "",
-      nameOnAadhar: merged.verificationDocs?.nameOnAadhar || merged.name || "",
-      nameOnPan: merged.verificationDocs?.nameOnPan || merged.name || "",
-      aadharImage: merged.verificationDocs?.aadharImage || "",
-      panImage: merged.verificationDocs?.panImage || ""
+      aadharNumber: user.verificationDocs?.aadharNumber || "",
+      panNumber: user.verificationDocs?.panNumber || "",
+      nameOnAadhar: user.verificationDocs?.nameOnAadhar || user.name || "",
+      nameOnPan: user.verificationDocs?.nameOnPan || user.name || "",
+      aadharImage: user.verificationDocs?.aadharImage || "",
+      panImage: user.verificationDocs?.panImage || ""
     },
     payrollDetails: {
-      firstName: merged.payrollDetails?.firstName || defaultFirst,
-      lastName: merged.payrollDetails?.lastName || defaultLast,
-      employeeCode: merged.payrollDetails?.employeeCode || personalDetails.employeeCode || "",
-      pfNumber: merged.payrollDetails?.pfNumber || "",
-      esiNumber: merged.payrollDetails?.esiNumber || "",
-      accountNumber: merged.payrollDetails?.accountNumber || "",
-      ifscCode: merged.payrollDetails?.ifscCode || "",
-      bankName: merged.payrollDetails?.bankName || "",
-      ctcAnnual: Number(merged.payrollDetails?.ctcAnnual || 0),
-      currency: merged.payrollDetails?.currency || "USD",
-      basicPct: Number(merged.payrollDetails?.basicPct || 40),
-      hraPct: Number(merged.payrollDetails?.hraPct || 20),
-      conveyanceFixed: Number(merged.payrollDetails?.conveyanceFixed || 0),
-      medicalFixed: Number(merged.payrollDetails?.medicalFixed || 0),
-      specialAllowanceFixed: Number(merged.payrollDetails?.specialAllowanceFixed || 0),
-      otherAllowanceFixed: Number(merged.payrollDetails?.otherAllowanceFixed || 0),
-      pfRate: Number(merged.payrollDetails?.pfRate || 12),
-      esiRate: Number(merged.payrollDetails?.esiRate || 0.75),
-      professionalTax: Number(merged.payrollDetails?.professionalTax || 200),
-      tds: Number(merged.payrollDetails?.tds || 0),
-      loanDeduction: Number(merged.payrollDetails?.loanDeduction || 0)
+      firstName: user.payrollDetails?.firstName || defaultFirst,
+      lastName: user.payrollDetails?.lastName || defaultLast,
+      employeeCode: user.payrollDetails?.employeeCode || personalDetails.employeeCode || "",
+      pfNumber: user.payrollDetails?.pfNumber || "",
+      esiNumber: user.payrollDetails?.esiNumber || "",
+      accountNumber: user.payrollDetails?.accountNumber || "",
+      ifscCode: user.payrollDetails?.ifscCode || "",
+      bankName: user.payrollDetails?.bankName || "",
+      ctcAnnual: Number(user.payrollDetails?.ctcAnnual || 0),
+      currency: user.payrollDetails?.currency || "USD",
+      basicPct: Number(user.payrollDetails?.basicPct || 40),
+      hraPct: Number(user.payrollDetails?.hraPct || 20),
+      conveyanceFixed: Number(user.payrollDetails?.conveyanceFixed || 0),
+      medicalFixed: Number(user.payrollDetails?.medicalFixed || 0),
+      specialAllowanceFixed: Number(user.payrollDetails?.specialAllowanceFixed || 0),
+      otherAllowanceFixed: Number(user.payrollDetails?.otherAllowanceFixed || 0),
+      pfRate: Number(user.payrollDetails?.pfRate || 12),
+      esiRate: Number(user.payrollDetails?.esiRate || 0.75),
+      professionalTax: Number(user.payrollDetails?.professionalTax || 200),
+      tds: Number(user.payrollDetails?.tds || 0),
+      loanDeduction: Number(user.payrollDetails?.loanDeduction || 0)
     }
   };
 };
 
-const ensureMonthlySalarySlips = (sourceState, referenceDate = new Date()) => {
-  if (referenceDate.getDate() < 2) return sourceState;
-
-  const targetPeriod = getPreviousMonthPeriod(referenceDate);
-  const existingSlipKeys = new Set(
-    (sourceState.salarySlips || []).map((slip) => `${slip.userId}:${getPeriodKeyFromSlip(slip)}`)
-  );
-
-  const payrollUsers = (sourceState.users || []).filter((user) =>
-    (user.permissions || []).includes("salary")
-  );
-
-  const generatedOn = referenceDate.toISOString();
-  const newSlips = payrollUsers
-    .filter((user) => !existingSlipKeys.has(`${user.id}:${targetPeriod.key}`))
-    .map((user) =>
-      computeSalarySlipForPeriod({
-        user,
-        attendanceSessions: sourceState.attendanceSessions,
-        leaves: sourceState.leaves,
-        holidays: sourceState.holidays,
-        year: targetPeriod.year,
-        monthIndex: targetPeriod.monthIndex,
-        generatedAt: generatedOn
-      })
-    );
-
-  if (newSlips.length === 0) return sourceState;
-
-  const notifications = newSlips.map((slip) => ({
-    id: `n-${Date.now()}-salary-${slip.userId}-${Math.random().toString(36).slice(2, 6)}`,
-    userId: slip.userId,
-    title: "Salary Slip Generated",
-    message: `${slip.month} salary slip is available for download in your portal.`,
-    channel: "app",
-    status: "sent",
-    createdAt: generatedOn,
-    read: false
-  }));
-
-  return {
-    ...sourceState,
-    salarySlips: [...newSlips, ...(sourceState.salarySlips || [])],
-    notifications: [...notifications, ...(sourceState.notifications || [])]
-  };
-};
-
-const getInitialState = () => {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (!saved) return baseState;
-  try {
-    const parsed = JSON.parse(saved);
-    const fallbackUsersById = HR_USERS.reduce((acc, user) => {
-      acc[user.id] = user;
-      return acc;
-    }, {});
-
-    const mergedUsers = (parsed.users || HR_USERS).map((user) => {
-      const fallback = fallbackUsersById[user.id] || {};
-      const migratedDepartment = user.department === "Engineering" ? "IT" : user.department;
-
-      return ensureUserProfileShape(
-        {
-          ...fallback,
-          ...user,
-          department: migratedDepartment || fallback.department
-        },
-        fallback
-      );
-    });
-
-    return {
-      ...baseState,
-      ...parsed,
-      users: mergedUsers,
-      organizationPosts: (parsed.organizationPosts || baseState.organizationPosts).map(ensurePostShape)
-    };
-  } catch (error) {
-    return baseState;
+const normalizeServerState = (payload = {}) => ({
+  currentUserId: payload.currentUserId || null,
+  users: (payload.users || []).map((user) => ensureUserProfileShape(user)),
+  attendance: payload.attendance || [],
+  attendanceSessions: payload.attendanceSessions || [],
+  holidays: payload.holidays || [],
+  regularizationRequests: payload.regularizationRequests || [],
+  leaves: payload.leaves || [],
+  organizationPosts: (payload.organizationPosts || []).map(ensurePostShape),
+  salarySlips: payload.salarySlips || [],
+  notifications: payload.notifications || [],
+  chats: payload.chats || [],
+  activityLogs: payload.activityLogs || [],
+  inviteLinks: payload.inviteLinks || [],
+  meta: {
+    ...baseState.meta,
+    ...(payload.meta || {}),
+    rolePermissions: payload.meta?.rolePermissions || baseState.meta.rolePermissions,
+    permissionOptions: payload.meta?.permissionOptions || baseState.meta.permissionOptions,
+    leaveTypes: payload.meta?.leaveTypes || baseState.meta.leaveTypes,
+    dayTypes: payload.meta?.dayTypes || baseState.meta.dayTypes,
+    attendanceStatuses: payload.meta?.attendanceStatuses || baseState.meta.attendanceStatuses,
+    workDayTypes: payload.meta?.workDayTypes || baseState.meta.workDayTypes,
+    roleOptions: payload.meta?.roleOptions || baseState.meta.roleOptions,
+    currencyOptions: payload.meta?.currencyOptions || baseState.meta.currencyOptions,
+    departments: payload.meta?.departments || baseState.meta.departments,
+    designations: payload.meta?.designations || baseState.meta.designations
   }
-};
+});
 
 export const AuthProvider = ({ children }) => {
-  const [state, setState] = useState(() => {
-    const initial = getInitialState();
-    return {
-      ...initial,
-      users: initial.users.map((user) => ensureUserProfileShape(user)),
-      organizationPosts: initial.organizationPosts.map(ensurePostShape)
-    };
-  });
+  const [state, setState] = useState(baseState);
+  const [isReady, setIsReady] = useState(false);
+  const initialCurrentUserIdRef = useRef(baseState.currentUserId);
 
-  const persist = (nextState) => {
-    setState(nextState);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+  const applyServerState = (payload, fallbackCurrentUserId = null) => {
+    const normalized = normalizeServerState({
+      ...payload,
+      currentUserId: payload?.currentUserId ?? fallbackCurrentUserId
+    });
+
+    setState((prev) => ({
+      ...prev,
+      ...normalized
+    }));
+
+    if (normalized.currentUserId) {
+      localStorage.setItem(SESSION_USER_KEY, normalized.currentUserId);
+    } else {
+      localStorage.removeItem(SESSION_USER_KEY);
+    }
+
+    return normalized;
   };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const load = async () => {
+      try {
+        const initialCurrentUserId = initialCurrentUserIdRef.current || "";
+        const bootstrap = await hrApi.getBootstrap(initialCurrentUserId);
+        if (!mounted) return;
+        applyServerState(bootstrap, initialCurrentUserId || null);
+      } catch (error) {
+        if (!mounted) return;
+        localStorage.removeItem(SESSION_USER_KEY);
+        setState((prev) => ({ ...prev, currentUserId: null }));
+      } finally {
+        if (mounted) setIsReady(true);
+      }
+    };
+
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     const nextTheme = state.uiTheme || "ocean";
     document.documentElement.setAttribute("data-theme", nextTheme);
+    localStorage.setItem(THEME_KEY, nextTheme);
   }, [state.uiTheme]);
 
-  useEffect(() => {
-    setState((prev) => {
-      const nextState = ensureMonthlySalarySlips(prev, new Date());
-      if (nextState === prev) return prev;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
-      return nextState;
-    });
-  }, []);
-
   const currentUser = useMemo(
-    () => state.users.find((u) => u.id === state.currentUserId) || null,
+    () => state.users.find((user) => user.id === state.currentUserId) || null,
     [state.currentUserId, state.users]
   );
+  const requiresPasswordChange = Boolean(currentUser?.passwordChangeRequired);
 
-  const startAttendanceSession = (nextState, userId, nowIso) => {
-    const now = new Date(nowIso);
-    const today = toDateString(now);
-    const openSession = nextState.attendanceSessions.find(
-      (session) => session.userId === userId && session.date === today && !session.clockOut
-    );
-    if (openSession) return nextState.attendanceSessions;
-
-    return [
-      ...nextState.attendanceSessions,
-      {
-        id: `as-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        userId,
-        date: today,
-        clockIn: nowIso,
-        clockOut: null,
-        workedMinutes: 0
-      }
-    ];
-  };
-
-  const closeAttendanceSession = (nextState, userId, nowIso) => {
-    const now = new Date(nowIso);
-    const sessions = [...nextState.attendanceSessions];
-    const openIndexes = sessions
-      .map((session, index) => ({ session, index }))
-      .filter(({ session }) => session.userId === userId && !session.clockOut);
-
-    if (openIndexes.length === 0) return nextState.attendanceSessions;
-
-    const { index } = openIndexes[openIndexes.length - 1];
-    const active = sessions[index];
-    const inTime = new Date(active.clockIn);
-    const workedMinutes = Math.max(Math.round((now - inTime) / 60000), 0);
-
-    sessions[index] = {
-      ...active,
-      clockOut: nowIso,
-      workedMinutes
-    };
-
-    return sessions;
-  };
-
-  const login = (email, password) => {
-    const user = state.users.find((u) => u.email === email && u.password === password);
-    if (!user) {
-      return { success: false, message: "Invalid email or password" };
+  const withHandledRequest = async (callback, fallbackMessage) => {
+    try {
+      return await callback();
+    } catch (error) {
+      return { success: false, message: error.message || fallbackMessage };
     }
-
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const location = inferLocationFromTimezone(timezone);
-
-    const nextState = ensureMonthlySalarySlips({
-      ...state,
-      currentUserId: user.id,
-      activityLogs: [createLogEntry("LOGIN", user, timezone, location), ...state.activityLogs]
-    }, new Date());
-
-    persist(nextState);
-    return { success: true };
   };
 
-  const loginWithInvite = (token) => {
-    const invite = state.inviteLinks.find((item) => item.token === token);
-    if (!invite) return { success: false, message: "Invalid invite link." };
-    if (invite.used) return { success: false, message: "Invite link already used." };
-    if (invite.expiresAt && new Date(invite.expiresAt) < new Date()) {
-      return { success: false, message: "Invite link expired." };
-    }
+  const login = async (email, password) =>
+    withHandledRequest(async () => {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const response = await hrApi.login({ email, password, timezone });
+      applyServerState(response.state, response.user?.id || null);
+      return { success: true };
+    }, "Unable to login.");
 
-    const user = state.users.find((u) => u.id === invite.userId);
-    if (!user) return { success: false, message: "User not found for this invite." };
+  const loginWithInvite = async (token) =>
+    withHandledRequest(async () => {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const response = await hrApi.loginWithInvite({ token, timezone });
+      applyServerState(response.state, response.user?.id || null);
+      return { success: true };
+    }, "Unable to process invite link.");
 
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const location = inferLocationFromTimezone(timezone);
-
-    const nextInviteLinks = state.inviteLinks.map((item) =>
-      item.token === token ? { ...item, used: true, usedAt: new Date().toISOString() } : item
-    );
-
-    const nextState = ensureMonthlySalarySlips({
-      ...state,
-      currentUserId: user.id,
-      inviteLinks: nextInviteLinks,
-      activityLogs: [createLogEntry("LOGIN", user, timezone, location), ...state.activityLogs]
-    }, new Date());
-
-    persist(nextState);
-    return { success: true };
-  };
-
-  const logout = () => {
+  const logout = async () => {
     if (!currentUser) return;
-
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const location = inferLocationFromTimezone(timezone);
-
-    const nextState = {
-      ...state,
-      currentUserId: null,
-      activityLogs: [createLogEntry("LOGOUT", currentUser, timezone, location), ...state.activityLogs]
-    };
-
-    persist(nextState);
+    try {
+      await hrApi.logout({ userId: currentUser.id, timezone });
+    } finally {
+      localStorage.removeItem(SESSION_USER_KEY);
+      setState((prev) => ({ ...prev, currentUserId: null }));
+    }
   };
+
+  const changePassword = async (currentPassword, newPassword) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.changePassword({
+        userId: currentUser.id,
+        currentPassword,
+        newPassword
+      });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to update password.");
 
   const hasPermission = (permissionKey) => {
     if (!currentUser) return false;
-    return currentUser.permissions.includes(permissionKey);
-  };
-
-  const attendanceClockIn = () => {
-    if (!currentUser) return { success: false, message: "User not logged in." };
-    const nowIso = new Date().toISOString();
-    const nextSessions = startAttendanceSession(state, currentUser.id, nowIso);
-    const wasStarted = nextSessions.length > state.attendanceSessions.length;
-    if (!wasStarted) {
-      return { success: false, message: "Attendance already started for today." };
-    }
-    persist({ ...state, attendanceSessions: nextSessions });
-    return { success: true };
-  };
-
-  const attendanceClockOut = () => {
-    if (!currentUser) return { success: false, message: "User not logged in." };
-    const nowIso = new Date().toISOString();
-    const nextSessions = closeAttendanceSession(state, currentUser.id, nowIso);
-    const wasClosed = nextSessions.some(
-      (session, index) => state.attendanceSessions[index] && !state.attendanceSessions[index].clockOut && session.clockOut
-    );
-    if (!wasClosed) {
-      return { success: false, message: "No active attendance session to end." };
-    }
-    persist({ ...state, attendanceSessions: nextSessions });
-    return { success: true };
+    return (currentUser.permissions || []).includes(permissionKey);
   };
 
   const setTheme = (themeKey) => {
     if (!AVAILABLE_THEMES.some((theme) => theme.key === themeKey)) return;
-    persist({ ...state, uiTheme: themeKey });
+    setState((prev) => ({ ...prev, uiTheme: themeKey }));
   };
 
-  const updateUserAccess = (userId, role, permissions) => {
-    const nextUsers = state.users.map((u) => {
-      if (u.id !== userId) return u;
-      return {
-        ...u,
+  const attendanceClockIn = async () =>
+    withHandledRequest(async () => {
+      const response = await hrApi.clockIn({ userId: currentUser.id });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to update attendance.");
+
+  const attendanceClockOut = async () =>
+    withHandledRequest(async () => {
+      const response = await hrApi.clockOut({ userId: currentUser.id });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to update attendance.");
+
+  const updateUserAccess = async (userId, role, permissions) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.updateAccess(userId, {
+        currentUserId: currentUser?.id || null,
         role,
-        permissions: role === "admin" ? ROLE_PERMISSIONS.admin : permissions
-      };
-    });
-
-    persist({ ...state, users: nextUsers });
-  };
-
-  const getEligibleApprovers = (employee) => {
-    const manager = employee.managerId ? state.users.find((u) => u.id === employee.managerId) : null;
-    const hrAndSenior = state.users.filter(
-      (u) =>
-        u.id !== employee.id &&
-        (u.role === "admin" || (/senior/i.test(u.designation || "") && u.department === employee.department))
-    );
-
-    return [manager, ...hrAndSenior].filter(Boolean);
-  };
-
-  const buildApproverQueue = (employee, selectedApproverIds = []) => {
-    const eligibleApprovers = getEligibleApprovers(employee);
-    const approverMap = eligibleApprovers.reduce((acc, approver) => {
-      acc[approver.id] = approver;
-      return acc;
-    }, {});
-
-    const selectedApprovers = selectedApproverIds
-      .map((id) => approverMap[id])
-      .filter(Boolean);
-
-    const fallbackApprovers = eligibleApprovers.filter(
-      (approver) => !selectedApproverIds.includes(approver.id)
-    );
-
-    const allApprovers = [...selectedApprovers, ...fallbackApprovers];
-    const unique = [];
-    const seen = new Set();
-    allApprovers.forEach((approver) => {
-      if (seen.has(approver.id)) return;
-      seen.add(approver.id);
-      unique.push(approver);
-    });
-
-    return unique.map((approver, idx) => ({
-      approverId: approver.id,
-      approverRole: getApprovalRoleLabel(approver),
-      status: idx === 0 ? "Pending" : "Awaiting",
-      comment: "",
-      actedAt: null
-    }));
-  };
+        permissions
+      });
+      applyServerState(response.state, currentUser?.id || null);
+      return { success: true };
+    }, "Unable to update access.");
 
   const getPaidLeaveSummary = (userId, asOfDate = new Date()) => {
-    const user = state.users.find((u) => u.id === userId);
+    const user = state.users.find((item) => item.id === userId);
     if (!user) return { accrued: 0, used: 0, remaining: 0 };
 
     const joiningDateStr = user.personalDetails?.joiningDate;
     const joiningDate = joiningDateStr ? new Date(joiningDateStr) : new Date(asOfDate.getFullYear(), 0, 1);
-
     const startYear = joiningDate.getFullYear();
     const startMonth = joiningDate.getMonth();
     const endYear = asOfDate.getFullYear();
@@ -518,12 +331,8 @@ export const AuthProvider = ({ children }) => {
 
     const accrued = Number((months * 1.5).toFixed(1));
     const used = state.leaves
-      .filter((leave) => {
-        if (leave.userId !== userId) return false;
-        if (leave.status !== "Approved") return false;
-        return leave.type === "Paid Leave";
-      })
-      .reduce((sum, leave) => sum + (leave.leaveDays || calculateLeaveDays(leave.fromDate, leave.toDate, leave.dayType)), 0);
+      .filter((leave) => leave.userId === userId && leave.status === "Approved" && leave.type === "Paid Leave")
+      .reduce((sum, leave) => sum + Number(leave.leaveDays || 0), 0);
 
     return {
       accrued,
@@ -532,776 +341,184 @@ export const AuthProvider = ({ children }) => {
     };
   };
 
-  const applyLeave = (leaveInput) => {
-    if (!currentUser) return;
-    const selectedApproverIds = Array.isArray(leaveInput.selectedApproverIds)
-      ? leaveInput.selectedApproverIds
-      : [];
-    const dayType = leaveInput.dayType || "Full Day";
-    const leaveDays = calculateLeaveDays(leaveInput.fromDate, leaveInput.toDate, dayType);
-    const approvalFlow = buildApproverQueue(currentUser, selectedApproverIds);
-    const currentApproverId = approvalFlow[0]?.approverId || null;
-    const firstRole = approvalFlow[0]?.approverRole;
-
-    const leave = {
-      id: `l-${Date.now()}`,
-      userId: currentUser.id,
-      ...leaveInput,
-      selectedApproverIds,
-      dayType,
-      leaveDays,
-      status: currentApproverId ? `Pending with ${firstRole}` : "Pending",
-      adminComment: "",
-      approvalFlow,
-      currentApprovalIndex: approvalFlow.length > 0 ? 0 : -1,
-      currentApproverId
-    };
-
-    const approvers = approvalFlow
-      .map((step) => state.users.find((u) => u.id === step.approverId))
-      .filter(Boolean);
-
-    const approverNotifications = approvers.map((approver) => ({
-      id: `n-${Date.now()}-${approver.id}`,
-      userId: approver.id,
-      title: "New leave request",
-      message: `${currentUser.name} submitted ${leaveInput.type} (${leaveDays} day(s)).`,
-      channel: "email",
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      read: false
-    }));
-
-    persist({
-      ...state,
-      leaves: [leave, ...state.leaves],
-      notifications: [...approverNotifications, ...state.notifications]
-    });
-  };
-
-  const takeLeaveAction = (leaveId, action, comment = "") => {
-    if (!currentUser) return;
-
-    const targetLeave = state.leaves.find((leave) => leave.id === leaveId);
-    if (!targetLeave) return;
-    if (!Array.isArray(targetLeave.approvalFlow) || targetLeave.approvalFlow.length === 0) return;
-
-    const pendingIndex = targetLeave.approvalFlow.findIndex(
-      (step) => step.approverId === currentUser.id && step.status === "Pending"
-    );
-
-    if (pendingIndex === -1) return;
-
-    const updatedFlow = targetLeave.approvalFlow.map((step, idx) => {
-      if (idx !== pendingIndex) return step;
-      return {
-        ...step,
-        status: action === "Approved" ? "Approved" : "Denied",
-        comment,
-        actedAt: new Date().toISOString()
-      };
-    });
-
-    const applicant = state.users.find((u) => u.id === targetLeave.userId);
-    let nextStatus = targetLeave.status;
-    let currentApproverId = null;
-    let currentApprovalIndex = -1;
-
-    const nextNotifications = [];
-
-    if (action === "Denied") {
-      nextStatus = "Denied";
-      nextNotifications.push({
-        id: `n-${Date.now()}-leave-denied`,
-        userId: targetLeave.userId,
-        title: "Leave denied",
-        message: `Your ${targetLeave.type} request was denied by ${currentUser.name}.`,
-        channel: "email",
-        status: "sent",
-        createdAt: new Date().toISOString(),
-        read: false
+  const applyLeave = async (leaveInput) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.applyLeave({
+        currentUserId: currentUser.id,
+        ...leaveInput
       });
-    } else {
-      const nextIndex = pendingIndex + 1;
-      if (nextIndex < updatedFlow.length) {
-        updatedFlow[nextIndex] = { ...updatedFlow[nextIndex], status: "Pending" };
-        currentApproverId = updatedFlow[nextIndex].approverId;
-        currentApprovalIndex = nextIndex;
-        nextStatus = `Pending with ${updatedFlow[nextIndex].approverRole}`;
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to submit leave request.");
 
-        nextNotifications.push({
-          id: `n-${Date.now()}-leave-next`,
-          userId: currentApproverId,
-          title: "Leave approval pending",
-          message: `${applicant?.name || "Employee"} leave request awaits your review.`,
-          channel: "email",
-          status: "sent",
-          createdAt: new Date().toISOString(),
-          read: false
-        });
-      } else {
-        nextStatus = "Approved";
-        nextNotifications.push({
-          id: `n-${Date.now()}-leave-approved`,
-          userId: targetLeave.userId,
-          title: "Leave approved",
-          message: `Your ${targetLeave.type} request is fully approved.`,
-          channel: "email",
-          status: "sent",
-          createdAt: new Date().toISOString(),
-          read: false
-        });
-      }
-    }
-
-    const updatedLeaves = state.leaves.map((leave) => {
-      if (leave.id !== leaveId) return leave;
-      return {
-        ...leave,
-        status: nextStatus,
-        adminComment: comment || leave.adminComment,
-        approvalFlow: updatedFlow,
-        currentApproverId,
-        currentApprovalIndex
-      };
-    });
-
-    persist({
-      ...state,
-      leaves: updatedLeaves,
-      notifications: [...nextNotifications, ...state.notifications]
-    });
-  };
-
-  const sendChatMessage = (toUserId, text) => {
-    if (!currentUser || !text.trim()) return;
-
-    const participantSet = [currentUser.id, toUserId].sort().join(":");
-    const chatIndex = state.chats.findIndex(
-      (chat) => chat.participants.slice().sort().join(":") === participantSet
-    );
-
-    const newMessage = {
-      id: `m-${Date.now()}`,
-      from: currentUser.id,
-      text,
-      createdAt: new Date().toISOString()
-    };
-
-    let nextChats = [...state.chats];
-
-    if (chatIndex >= 0) {
-      nextChats[chatIndex] = {
-        ...nextChats[chatIndex],
-        messages: [...nextChats[chatIndex].messages, newMessage]
-      };
-    } else {
-      nextChats = [
-        ...nextChats,
-        {
-          id: `c-${Date.now()}`,
-          participants: [currentUser.id, toUserId],
-          messages: [newMessage]
-        }
-      ];
-    }
-
-    const receiver = state.users.find((u) => u.id === toUserId);
-    const chatNotification = {
-      id: `n-${Date.now()}-chat`,
-      userId: toUserId,
-      title: "New chat message",
-      message: `${currentUser.name} sent: ${text.slice(0, 45)}${text.length > 45 ? "..." : ""}`,
-      channel: "app",
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      read: false
-    };
-
-    const emailNotification = {
-      id: `n-${Date.now()}-mail`,
-      userId: toUserId,
-      title: "Email notification",
-      message: `Email queued to ${receiver?.email || "user"} for new chat message.`,
-      channel: "email",
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      read: false
-    };
-
-    persist({
-      ...state,
-      chats: nextChats,
-      notifications: [chatNotification, emailNotification, ...state.notifications]
-    });
-  };
-
-  const markNotificationRead = (notificationId) => {
-    const notifications = state.notifications.map((n) =>
-      n.id === notificationId ? { ...n, read: true } : n
-    );
-    persist({ ...state, notifications });
-  };
-
-  const createCompanyPost = ({ title, message, attachments = [] }) => {
-    if (!currentUser) return { success: false, message: "Unauthorized request." };
-    if (!(currentUser.role === "admin" || hasPermission("access"))) {
-      return { success: false, message: "You do not have rights to publish company posts." };
-    }
-    if (!title?.trim() || !message?.trim()) {
-      return { success: false, message: "Title and message are required." };
-    }
-
-    const post = ensurePostShape({
-      id: `p-${Date.now()}`,
-      title: title.trim(),
-      summary: message.trim().slice(0, 160),
-      message: message.trim(),
-      author: currentUser.name,
-      authorId: currentUser.id,
-      createdAt: new Date().toISOString(),
-      attachments,
-      likes: [],
-      comments: []
-    });
-
-    const notifications = state.users
-      .filter((user) => user.id !== currentUser.id)
-      .map((user) => ({
-        id: `n-${Date.now()}-post-${user.id}`,
-        userId: user.id,
-        title: `Company Post: ${post.title}`,
-        message: `${currentUser.name} posted a new announcement.`,
-        channel: "app",
-        status: "sent",
-        createdAt: new Date().toISOString(),
-        read: false
-      }));
-
-    persist({
-      ...state,
-      organizationPosts: [post, ...state.organizationPosts],
-      notifications: [...notifications, ...state.notifications]
-    });
-
-    return { success: true, post };
-  };
-
-  const togglePostLike = (postId) => {
-    if (!currentUser) return;
-
-    const post = state.organizationPosts.find((item) => item.id === postId);
-    if (!post) return;
-
-    const alreadyLiked = (post.likes || []).includes(currentUser.id);
-
-    const organizationPosts = state.organizationPosts.map((item) => {
-      if (item.id !== postId) return item;
-      return ensurePostShape({
-        ...item,
-        likes: alreadyLiked
-          ? item.likes.filter((userId) => userId !== currentUser.id)
-          : [...(item.likes || []), currentUser.id]
+  const takeLeaveAction = async (leaveId, action, comment = "") =>
+    withHandledRequest(async () => {
+      const response = await hrApi.takeLeaveAction(leaveId, {
+        currentUserId: currentUser.id,
+        action,
+        comment
       });
-    });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to process leave request.");
 
-    persist({
-      ...state,
-      organizationPosts
-    });
-  };
-
-  const addPostComment = (postId, text) => {
-    if (!currentUser || !text?.trim()) return;
-
-    const comment = {
-      id: `pc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      userId: currentUser.id,
-      userName: currentUser.name,
-      message: text.trim(),
-      createdAt: new Date().toISOString()
-    };
-
-    const organizationPosts = state.organizationPosts.map((item) => {
-      if (item.id !== postId) return item;
-      return ensurePostShape({
-        ...item,
-        comments: [...(item.comments || []), comment]
+  const sendChatMessage = async (toUserId, text) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.sendChatMessage({
+        currentUserId: currentUser.id,
+        toUserId,
+        text
       });
-    });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to send message.");
 
-    persist({
-      ...state,
-      organizationPosts
-    });
-  };
-
-  const createEmployeeInvite = ({
-    name,
-    email,
-    department,
-    designation,
-    permissions = ROLE_PERMISSIONS.employee
-  }) => {
-    if (!currentUser) return { success: false, message: "Unauthorized request." };
-    if (state.users.some((user) => user.email.toLowerCase() === email.toLowerCase())) {
-      return { success: false, message: "Email already exists." };
-    }
-
-    const userId = `u-${Date.now()}`;
-    const password = `temp-${Math.random().toString(36).slice(2, 8)}`;
-
-    const newUser = ensureUserProfileShape({
-      id: userId,
-      name,
-      email,
-      password,
-      role: "employee",
-      permissions,
-      designation: designation || `${department} Associate`,
-      department,
-      location: "",
-      phone: "",
-      image: HR_USERS[1]?.image || "",
-      managerId: currentUser.id,
-      personalDetails: {
-        employeeCode: `${department.slice(0, 3).toUpperCase()}-${userId.slice(-4).toUpperCase()}`,
-        joiningDate: new Date().toISOString().slice(0, 10)
-      }
-    });
-
-    const token = createInviteToken();
-    const invite = {
-      token,
-      userId,
-      email,
-      createdBy: currentUser.id,
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(),
-      used: false
-    };
-
-    const portalLink = `${window.location.origin}/ingeniousportal/invite/${token}`;
-
-    const notificationToEmployee = {
-      id: `n-${Date.now()}-invite-user`,
-      userId,
-      title: "Ingenious Portal Access Link",
-      message: `Use this portal link to sign in directly: ${portalLink}`,
-      channel: "email",
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      read: false
-    };
-
-    const notificationToCreator = {
-      id: `n-${Date.now()}-invite-admin`,
-      userId: currentUser.id,
-      title: "Employee Portal Link Generated",
-      message: `Portal link for ${email}: ${portalLink}`,
-      channel: "app",
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      read: false
-    };
-
-    persist({
-      ...state,
-      users: [...state.users, newUser],
-      inviteLinks: [invite, ...state.inviteLinks],
-      notifications: [notificationToCreator, notificationToEmployee, ...state.notifications]
-    });
-
-    return { success: true, portalLink, user: newUser };
-  };
-
-  const updateCurrentUserProfile = (nextProfile) => {
-    if (!currentUser) return;
-
-    const users = state.users.map((user) => {
-      if (user.id !== currentUser.id) return user;
-
-      const personalDetails = {
-        ...user.personalDetails,
-        ...(nextProfile.personalDetails || {})
-      };
-
-      const verificationDocs = {
-        ...user.verificationDocs,
-        ...(nextProfile.verificationDocs || {})
-      };
-
-      const educationDetails = Array.isArray(nextProfile.educationDetails)
-        ? nextProfile.educationDetails
-        : user.educationDetails;
-
-      return ensureUserProfileShape({
-        ...user,
-        ...nextProfile,
-        dob: personalDetails.dob || user.dob,
-        phone: nextProfile.phone || user.phone,
-        location: nextProfile.location || user.location,
-        education: educationDetails[0]?.degree || user.education,
-        personalDetails,
-        verificationDocs,
-        educationDetails
+  const markNotificationRead = async (notificationId) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.markNotificationRead(notificationId, {
+        currentUserId: currentUser?.id || null
       });
-    });
+      applyServerState(response.state, currentUser?.id || null);
+      return { success: true };
+    }, "Unable to update notification.");
 
-    persist({ ...state, users });
-  };
-
-  const updateEmployeePayroll = (userId, payrollInput) => {
-    if (!currentUser) return { success: false, message: "User not logged in." };
-    if (!(currentUser.role === "admin" || hasPermission("access"))) {
-      return { success: false, message: "Only HR/Admin can update payroll details." };
-    }
-
-    const targetUser = state.users.find((u) => u.id === userId);
-    if (!targetUser) return { success: false, message: "Employee not found." };
-
-    const mergedPayroll = {
-      ...targetUser.payrollDetails,
-      ...payrollInput,
-      ctcAnnual: Number(payrollInput.ctcAnnual || 0),
-      basicPct: Number(payrollInput.basicPct ?? targetUser.payrollDetails?.basicPct ?? 40),
-      hraPct: Number(payrollInput.hraPct ?? targetUser.payrollDetails?.hraPct ?? 20),
-      conveyanceFixed: Number(payrollInput.conveyanceFixed ?? targetUser.payrollDetails?.conveyanceFixed ?? 0),
-      medicalFixed: Number(payrollInput.medicalFixed ?? targetUser.payrollDetails?.medicalFixed ?? 0),
-      specialAllowanceFixed: Number(payrollInput.specialAllowanceFixed ?? targetUser.payrollDetails?.specialAllowanceFixed ?? 0),
-      otherAllowanceFixed: Number(payrollInput.otherAllowanceFixed ?? targetUser.payrollDetails?.otherAllowanceFixed ?? 0),
-      pfRate: Number(payrollInput.pfRate ?? targetUser.payrollDetails?.pfRate ?? 12),
-      esiRate: Number(payrollInput.esiRate ?? targetUser.payrollDetails?.esiRate ?? 0.75),
-      professionalTax: Number(payrollInput.professionalTax ?? targetUser.payrollDetails?.professionalTax ?? 200),
-      tds: Number(payrollInput.tds ?? targetUser.payrollDetails?.tds ?? 0),
-      loanDeduction: Number(payrollInput.loanDeduction ?? targetUser.payrollDetails?.loanDeduction ?? 0)
-    };
-
-    const fullName = `${(mergedPayroll.firstName || "").trim()} ${(mergedPayroll.lastName || "").trim()}`.trim();
-
-    const users = state.users.map((user) => {
-      if (user.id !== userId) return user;
-      return ensureUserProfileShape({
-        ...user,
-        name: fullName || user.name,
-        payrollDetails: mergedPayroll,
-        personalDetails: {
-          ...user.personalDetails,
-          employeeCode: mergedPayroll.employeeCode || user.personalDetails?.employeeCode || ""
-        }
+  const createCompanyPost = async ({ title, message, attachments = [] }) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.createCompanyPost({
+        currentUserId: currentUser.id,
+        title,
+        message,
+        attachments
       });
-    });
-    const updatedUser = users.find((user) => user.id === userId);
-    const now = new Date();
-    const currentPeriod = getCurrentMonthPeriod(now);
-    const generatedSlip = computeSalarySlipForPeriod({
-      user: updatedUser,
-      attendanceSessions: state.attendanceSessions,
-      leaves: state.leaves,
-      holidays: state.holidays,
-      year: currentPeriod.year,
-      monthIndex: currentPeriod.monthIndex,
-      generatedAt: now.toISOString()
-    });
-    const salarySlips = [
-      generatedSlip,
-      ...state.salarySlips.filter(
-        (slip) => !(slip.userId === userId && getPeriodKeyFromSlip(slip) === currentPeriod.key)
-      )
-    ];
+      applyServerState(response.state, currentUser.id);
+      return { success: true, post: response.post };
+    }, "Unable to create post.");
 
-    const notification = {
-      id: `n-${Date.now()}-payroll-update`,
-      userId,
-      title: "Payroll profile updated",
-      message: "HR updated your salary profile and generated this month salary slip.",
-      channel: "app",
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      read: false
-    };
+  const togglePostLike = async (postId) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.togglePostLike(postId, {
+        currentUserId: currentUser.id
+      });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to update post like.");
 
-    persist({
-      ...state,
-      users,
-      salarySlips,
-      notifications: [notification, ...state.notifications]
-    });
+  const addPostComment = async (postId, text) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.addPostComment(postId, {
+        currentUserId: currentUser.id,
+        text
+      });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to add comment.");
 
-    return { success: true };
-  };
+  const submitRegularizationRequest = async ({ date, reason, recipientUserId = null }) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.submitRegularizationRequest({
+        currentUserId: currentUser.id,
+        date,
+        reason,
+        recipientUserId
+      });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to submit regularization request.");
 
-  const submitRegularizationRequest = ({ date, reason, recipientUserId = null }) => {
-    if (!currentUser) return { success: false, message: "User not logged in." };
-    if (!date || !reason?.trim()) return { success: false, message: "Date and reason are required." };
-
-    const exists = state.regularizationRequests.find(
-      (request) =>
-        request.userId === currentUser.id &&
-        request.date === date &&
-        request.status === "Pending"
-    );
-    if (exists) return { success: false, message: "Pending request already exists for this date." };
-
-    const recipient =
-      recipientUserId
-        ? state.users.find((user) => user.id === recipientUserId)
-        : state.users.find((user) => user.role === "admin");
-
-    const request = {
-      id: `rr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      userId: currentUser.id,
-      date,
-      reason: reason.trim(),
-      recipientUserId: recipient?.id || null,
-      recipientEmail: recipient?.email || "",
-      status: "Pending",
-      createdAt: new Date().toISOString(),
-      reviewedBy: null,
-      reviewComment: ""
-    };
-
-    const notifications = recipient
-      ? [
-          {
-            id: `n-${Date.now()}-reg-${recipient.id}`,
-            userId: recipient.id,
-            title: "Attendance regularization request",
-            message: `${currentUser.name} requested attendance regularization for ${date}.`,
-            channel: "email",
-            status: "sent",
-            createdAt: new Date().toISOString(),
-            read: false
-          }
-        ]
-      : [];
-
-    persist({
-      ...state,
-      regularizationRequests: [request, ...state.regularizationRequests],
-      notifications: [...notifications, ...state.notifications]
-    });
-
-    return { success: true };
-  };
-
-  const regularizeAttendance = ({ userId, date, requestId = null, comment = "" }) => {
-    if (!currentUser) return { success: false, message: "User not logged in." };
-    if (!(currentUser.role === "admin" || hasPermission("access"))) {
-      return { success: false, message: "You are not allowed to regularize attendance." };
-    }
-    if (!userId || !date) return { success: false, message: "Employee and date are required." };
-
-    const clockIn = `${date}T09:00:00.000Z`;
-    const clockOut = `${date}T18:00:00.000Z`;
-
-    let updatedSessions = [...state.attendanceSessions];
-    const existingIndex = updatedSessions.findIndex(
-      (session) => session.userId === userId && session.date === date
-    );
-
-    if (existingIndex >= 0) {
-      updatedSessions[existingIndex] = {
-        ...updatedSessions[existingIndex],
-        clockIn: updatedSessions[existingIndex].clockIn || clockIn,
-        clockOut,
-        workedMinutes: Math.max(updatedSessions[existingIndex].workedMinutes || 0, 540)
-      };
-    } else {
-      updatedSessions = [
-        ...updatedSessions,
-        {
-          id: `as-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          userId,
-          date,
-          clockIn,
-          clockOut,
-          workedMinutes: 540
-        }
-      ];
-    }
-
-    const requests = state.regularizationRequests.map((request) => {
-      if (request.id !== requestId) return request;
-      return {
-        ...request,
-        status: "Approved",
-        reviewedBy: currentUser.id,
-        reviewComment: comment || "Regularized as full day by HR/Admin.",
-        reviewedAt: new Date().toISOString()
-      };
-    });
-
-    const notification = {
-      id: `n-${Date.now()}-reg-approved`,
-      userId,
-      title: "Attendance regularized",
-      message: `Your attendance for ${date} was regularized as full day.`,
-      channel: "email",
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      read: false
-    };
-
-    persist({
-      ...state,
-      attendanceSessions: updatedSessions,
-      regularizationRequests: requests,
-      notifications: [notification, ...state.notifications]
-    });
-
-    return { success: true };
-  };
-
-  const adminUpdateAttendance = ({
-    userId,
-    date,
-    attendanceStatus,
-    workDayType = "No Work Session",
-    comment = ""
-  }) => {
-    if (!currentUser) return { success: false, message: "User not logged in." };
-    if (!(currentUser.role === "admin" || hasPermission("access"))) {
-      return { success: false, message: "You are not allowed to edit attendance." };
-    }
-    if (!userId || !date || !attendanceStatus) {
-      return { success: false, message: "Employee, date and attendance status are required." };
-    }
-
-    const validStatuses = ["Present", "Absent", "WFH"];
-    if (!validStatuses.includes(attendanceStatus)) {
-      return { success: false, message: "Invalid attendance status." };
-    }
-
-    const nextAttendance = [...state.attendance];
-    const existingAttendanceIndex = nextAttendance.findIndex(
-      (record) => record.userId === userId && record.date === date
-    );
-
-    if (existingAttendanceIndex >= 0) {
-      nextAttendance[existingAttendanceIndex] = {
-        ...nextAttendance[existingAttendanceIndex],
-        status: attendanceStatus
-      };
-    } else {
-      nextAttendance.push({
-        id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  const regularizeAttendance = async ({ userId, date, requestId = null, comment = "" }) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.regularizeAttendance({
+        currentUserId: currentUser.id,
         userId,
         date,
-        status: attendanceStatus
+        requestId,
+        comment
       });
-    }
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to regularize attendance.");
 
-    const sessionsWithoutDate = state.attendanceSessions.filter(
-      (session) => !(session.userId === userId && session.date === date)
-    );
-
-    let nextSessions = sessionsWithoutDate;
-    if (attendanceStatus !== "Absent") {
-      if (workDayType === "Full Day") {
-        nextSessions = [
-          ...sessionsWithoutDate,
-          {
-            id: `as-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            userId,
-            date,
-            clockIn: `${date}T09:00:00.000Z`,
-            clockOut: `${date}T18:00:00.000Z`,
-            workedMinutes: 540
-          }
-        ];
-      } else if (workDayType === "Half Day") {
-        nextSessions = [
-          ...sessionsWithoutDate,
-          {
-            id: `as-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            userId,
-            date,
-            clockIn: `${date}T09:00:00.000Z`,
-            clockOut: `${date}T14:00:00.000Z`,
-            workedMinutes: 300
-          }
-        ];
-      }
-    }
-
-    const notification = {
-      id: `n-${Date.now()}-attendance-admin-update`,
-      userId,
-      title: "Attendance updated by HR/Admin",
-      message: `Attendance on ${date} updated to ${attendanceStatus}${comment ? ` (${comment})` : ""}.`,
-      channel: "email",
-      status: "sent",
-      createdAt: new Date().toISOString(),
-      read: false
-    };
-
-    persist({
-      ...state,
-      attendance: nextAttendance,
-      attendanceSessions: nextSessions,
-      notifications: [notification, ...state.notifications]
-    });
-
-    return { success: true };
-  };
-
-  const deleteEducationEntry = (educationId) => {
-    if (!currentUser) return;
-
-    const users = state.users.map((user) => {
-      if (user.id !== currentUser.id) return user;
-      const educationDetails = (user.educationDetails || []).filter((edu) => edu.id !== educationId);
-      return ensureUserProfileShape({
-        ...user,
-        educationDetails,
-        education: educationDetails[0]?.degree || ""
+  const adminUpdateAttendance = async (attendanceInput) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.adminUpdateAttendance({
+        currentUserId: currentUser.id,
+        ...attendanceInput
       });
-    });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to update attendance.");
 
-    persist({ ...state, users });
-  };
-
-  const deleteVerificationDocument = (type) => {
-    if (!currentUser) return;
-
-    const users = state.users.map((user) => {
-      if (user.id !== currentUser.id) return user;
-      const verificationDocs = { ...user.verificationDocs };
-
-      if (type === "aadhar") {
-        verificationDocs.aadharImage = "";
-        verificationDocs.aadharNumber = "";
-      }
-      if (type === "pan") {
-        verificationDocs.panImage = "";
-        verificationDocs.panNumber = "";
-      }
-
-      return ensureUserProfileShape({
-        ...user,
-        verificationDocs
+  const createEmployeeInvite = async (inviteInput) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.createInvite({
+        currentUserId: currentUser.id,
+        appBaseUrl: `${window.location.origin}${process.env.PUBLIC_URL || "/ingeniousportal"}`,
+        ...inviteInput
       });
-    });
+      applyServerState(response.state, currentUser.id);
+      return {
+        success: true,
+        portalLink: response.portalLink,
+        tempPassword: response.tempPassword,
+        emailDelivered: response.emailDelivered,
+        emailMessage: response.emailMessage,
+        mailerConfigured: response.mailerConfigured
+      };
+    }, "Unable to create employee access.");
 
-    persist({ ...state, users });
-  };
+  const updateCurrentUserProfile = async (nextProfile) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.updateProfile(currentUser.id, {
+        currentUserId: currentUser.id,
+        ...nextProfile
+      });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to update profile.");
+
+  const updateEmployeePayroll = async (userId, payrollInput) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.updatePayroll(userId, {
+        currentUserId: currentUser.id,
+        payroll: payrollInput
+      });
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to update payroll details.");
+
+  const deleteEducationEntry = async (educationId) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.deleteEducation(currentUser.id, educationId);
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to delete education entry.");
+
+  const deleteVerificationDocument = async (type) =>
+    withHandledRequest(async () => {
+      const response = await hrApi.deleteDocument(currentUser.id, type);
+      applyServerState(response.state, currentUser.id);
+      return { success: true };
+    }, "Unable to delete document.");
 
   const value = {
     ...state,
     currentUser,
-    uiTheme: state.uiTheme,
+    isReady,
+    requiresPasswordChange,
     availableThemes: AVAILABLE_THEMES,
+    hasValue,
     login,
+    loginWithInvite,
+    changePassword,
     logout,
+    hasPermission,
+    setTheme,
     attendanceClockIn,
     attendanceClockOut,
-    setTheme,
-    hasPermission,
     updateUserAccess,
+    getPaidLeaveSummary,
     applyLeave,
     takeLeaveAction,
-    getPaidLeaveSummary,
     sendChatMessage,
     markNotificationRead,
     createCompanyPost,
@@ -1310,12 +527,11 @@ export const AuthProvider = ({ children }) => {
     submitRegularizationRequest,
     regularizeAttendance,
     adminUpdateAttendance,
-    updateCurrentUserProfile,
-    deleteEducationEntry,
-    deleteVerificationDocument,
     createEmployeeInvite,
-    loginWithInvite,
-    updateEmployeePayroll
+    updateCurrentUserProfile,
+    updateEmployeePayroll,
+    deleteEducationEntry,
+    deleteVerificationDocument
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

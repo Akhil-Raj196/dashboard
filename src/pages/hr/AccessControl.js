@@ -1,33 +1,29 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Card, Col, Form, InputGroup, Row, Table } from "@themesberg/react-bootstrap";
 import { useAuth } from "../../context/AuthContext";
-import { ROLE_PERMISSIONS } from "../../data/hrData";
-
-const employeePermissionOptions = [
-  "dashboard",
-  "attendance",
-  "regularize",
-  "profile",
-  "leave",
-  "salary",
-  "payroll_admin",
-  "chat",
-  "notifications",
-  "access",
-  "company_posts"
-];
 
 export default function AccessControl() {
-  const { users, currentUser, updateUserAccess, createEmployeeInvite, adminUpdateAttendance } = useAuth();
+  const { users, currentUser, updateUserAccess, createEmployeeInvite, adminUpdateAttendance, meta } = useAuth();
+  const rolePermissions = meta?.rolePermissions || { admin: [], employee: [] };
+  const permissionOptions = meta?.permissionOptions || [];
+  const departmentOptions = meta?.departments || [];
+  const designationOptions = meta?.designations || [];
+  const attendanceStatusOptions = meta?.attendanceStatuses || [];
+  const workDayTypeOptions = meta?.workDayTypes || [];
+  const roleOptions = meta?.roleOptions || ["employee", "admin"];
 
   const managedUsers = useMemo(
     () => users.filter((user) => user.id !== currentUser.id),
     [users, currentUser.id]
   );
-
-  const departments = useMemo(
-    () => Array.from(new Set(users.map((user) => user.department).filter(Boolean))).sort(),
-    [users]
+  const managerOptions = useMemo(
+    () =>
+      users.filter(
+        (user) =>
+          user.id !== currentUser.id &&
+          (user.role === "admin" || /manager|lead|senior/i.test(user.designation || ""))
+      ),
+    [users, currentUser.id]
   );
 
   const [drafts, setDrafts] = useState(() => {
@@ -41,28 +37,53 @@ export default function AccessControl() {
   const [inviteForm, setInviteForm] = useState({
     name: "",
     email: "",
-    department: departments[0] || "IT",
+    department: departmentOptions[0] || "",
     designation: "",
-    permissions: ["dashboard", "attendance", "profile", "leave", "salary", "chat", "notifications"]
+    managerId: managerOptions[0]?.id || "",
+    permissions: rolePermissions.employee || []
   });
   const [inviteError, setInviteError] = useState("");
   const [inviteLink, setInviteLink] = useState("");
+  const [inviteInfo, setInviteInfo] = useState("");
+  const [inviteTempPassword, setInviteTempPassword] = useState("");
   const [attendanceForm, setAttendanceForm] = useState({
     userId: managedUsers[0]?.id || "",
     date: new Date().toISOString().slice(0, 10),
-    attendanceStatus: "Present",
-    workDayType: "Full Day",
+    attendanceStatus: attendanceStatusOptions[0] || "",
+    workDayType: workDayTypeOptions[0] || "",
     comment: ""
   });
   const [attendanceMessage, setAttendanceMessage] = useState("");
   const [attendanceError, setAttendanceError] = useState("");
+
+  useEffect(() => {
+    const nextDrafts = {};
+    managedUsers.forEach((user) => {
+      nextDrafts[user.id] = { role: user.role, permissions: user.permissions };
+    });
+    setDrafts(nextDrafts);
+
+    setInviteForm((prev) => ({
+      ...prev,
+      department: prev.department || departmentOptions[0] || "",
+      managerId: prev.managerId || managerOptions[0]?.id || "",
+      permissions: prev.permissions.length > 0 ? prev.permissions : rolePermissions.employee || []
+    }));
+
+    setAttendanceForm((prev) => ({
+      ...prev,
+      userId: managedUsers[0]?.id || prev.userId || "",
+      attendanceStatus: prev.attendanceStatus || attendanceStatusOptions[0] || "",
+      workDayType: prev.workDayType || workDayTypeOptions[0] || ""
+    }));
+  }, [managedUsers, departmentOptions, managerOptions, rolePermissions.employee, attendanceStatusOptions, workDayTypeOptions]);
 
   const setRole = (userId, role) => {
     setDrafts((prev) => ({
       ...prev,
       [userId]: {
         role,
-        permissions: role === "admin" ? ROLE_PERMISSIONS.admin : ROLE_PERMISSIONS.employee
+        permissions: role === "admin" ? rolePermissions.admin || [] : rolePermissions.employee || []
       }
     }));
   };
@@ -95,33 +116,42 @@ export default function AccessControl() {
     });
   };
 
-  const onCreateInvite = (event) => {
+  const onCreateInvite = async (event) => {
     event.preventDefault();
     setInviteError("");
     setInviteLink("");
+    setInviteInfo("");
+    setInviteTempPassword("");
 
-    const response = createEmployeeInvite(inviteForm);
+    const response = await createEmployeeInvite(inviteForm);
     if (!response.success) {
       setInviteError(response.message || "Unable to create employee access.");
       return;
     }
 
     setInviteLink(response.portalLink);
+    setInviteInfo(
+      response.emailDelivered
+        ? "Invite email sent to the employee with the temporary password."
+        : (response.emailMessage || "Employee account created, but invite email was not sent.")
+    );
+    setInviteTempPassword(response.tempPassword || "");
     setInviteForm({
       name: "",
       email: "",
-      department: departments[0] || "IT",
+      department: departmentOptions[0] || "",
       designation: "",
-      permissions: ["dashboard", "attendance", "profile", "leave", "salary", "chat", "notifications"]
+      managerId: managerOptions[0]?.id || "",
+      permissions: rolePermissions.employee || []
     });
   };
 
-  const onAttendanceOverrideSubmit = (event) => {
+  const onAttendanceOverrideSubmit = async (event) => {
     event.preventDefault();
     setAttendanceMessage("");
     setAttendanceError("");
 
-    const response = adminUpdateAttendance(attendanceForm);
+    const response = await adminUpdateAttendance(attendanceForm);
     if (!response.success) {
       setAttendanceError(response.message || "Unable to update attendance.");
       return;
@@ -165,34 +195,77 @@ export default function AccessControl() {
                 </Col>
                 <Col md={6} className="mb-3">
                   <Form.Label>Department</Form.Label>
-                  <Form.Select
-                    value={inviteForm.department}
-                    onChange={(e) => {
-                      const { value } = e.target;
-                      setInviteForm((prev) => ({ ...prev, department: value }));
-                    }}
-                  >
-                    {departments.map((department) => (
-                      <option key={department} value={department}>{department}</option>
-                    ))}
-                    {!departments.includes("IT") ? <option value="IT">IT</option> : null}
-                  </Form.Select>
+                  {departmentOptions.length > 0 ? (
+                    <Form.Select
+                      value={inviteForm.department}
+                      onChange={(e) => {
+                        const { value } = e.target;
+                        setInviteForm((prev) => ({ ...prev, department: value }));
+                      }}
+                    >
+                      <option value="">Select department</option>
+                      {departmentOptions.map((department) => (
+                        <option key={department} value={department}>{department}</option>
+                      ))}
+                    </Form.Select>
+                  ) : (
+                    <Form.Control
+                      value={inviteForm.department}
+                      onChange={(e) => {
+                        const { value } = e.target;
+                        setInviteForm((prev) => ({ ...prev, department: value }));
+                      }}
+                      placeholder="Enter department"
+                    />
+                  )}
                 </Col>
                 <Col md={6} className="mb-3">
                   <Form.Label>Designation</Form.Label>
-                  <Form.Control
-                    value={inviteForm.designation}
+                  {designationOptions.length > 0 ? (
+                    <Form.Select
+                      value={inviteForm.designation}
+                      onChange={(e) => {
+                        const { value } = e.target;
+                        setInviteForm((prev) => ({ ...prev, designation: value }));
+                      }}
+                    >
+                      <option value="">Select designation</option>
+                      {designationOptions.map((designation) => (
+                        <option key={designation} value={designation}>{designation}</option>
+                      ))}
+                    </Form.Select>
+                  ) : (
+                    <Form.Control
+                      value={inviteForm.designation}
+                      onChange={(e) => {
+                        const { value } = e.target;
+                        setInviteForm((prev) => ({ ...prev, designation: value }));
+                      }}
+                      placeholder="e.g. Software Engineer"
+                    />
+                  )}
+                </Col>
+                <Col md={6} className="mb-3">
+                  <Form.Label>Reporting Manager</Form.Label>
+                  <Form.Select
+                    value={inviteForm.managerId}
                     onChange={(e) => {
                       const { value } = e.target;
-                      setInviteForm((prev) => ({ ...prev, designation: value }));
+                      setInviteForm((prev) => ({ ...prev, managerId: value }));
                     }}
-                    placeholder="e.g. Software Engineer"
-                  />
+                  >
+                    <option value="">Select manager</option>
+                    {managerOptions.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.name} - {user.designation || user.role}
+                      </option>
+                    ))}
+                  </Form.Select>
                 </Col>
                 <Col xs={12} className="mb-3">
                   <Form.Label>Portal Access Permissions</Form.Label>
                   <div>
-                    {employeePermissionOptions.map((permission) => (
+                    {permissionOptions.map((permission) => (
                       <Form.Check
                         inline
                         key={`invite-permission-${permission}`}
@@ -210,6 +283,7 @@ export default function AccessControl() {
             </Form>
 
             {inviteError ? <Alert variant="danger" className="mt-3 mb-0">{inviteError}</Alert> : null}
+            {inviteInfo ? <Alert variant={inviteTempPassword ? "warning" : "success"} className="mt-3 mb-0">{inviteInfo}</Alert> : null}
 
             {inviteLink ? (
               <div className="mt-3">
@@ -228,6 +302,15 @@ export default function AccessControl() {
                   </Button>
                 </InputGroup>
                 <small className="text-gray">Employee can open this link and sign in directly with assigned access.</small>
+                {inviteTempPassword ? (
+                  <div className="mt-2">
+                    <Form.Label>Temporary Password</Form.Label>
+                    <Form.Control readOnly value={inviteTempPassword} />
+                    <small className="text-danger">
+                      Email delivery is not configured, so share this password securely with the employee. They will be forced to change it on first login.
+                    </small>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </Card.Body>
@@ -281,9 +364,9 @@ export default function AccessControl() {
                       setAttendanceForm((prev) => ({ ...prev, attendanceStatus: value }));
                     }}
                   >
-                    <option value="Present">Present</option>
-                    <option value="Absent">Absent</option>
-                    <option value="WFH">WFH</option>
+                    {attendanceStatusOptions.map((status) => (
+                      <option key={status} value={status}>{status}</option>
+                    ))}
                   </Form.Select>
                 </Col>
                 <Col md={6} className="mb-3">
@@ -296,9 +379,15 @@ export default function AccessControl() {
                       setAttendanceForm((prev) => ({ ...prev, workDayType: value }));
                     }}
                   >
-                    <option value="Full Day">Full Day (9h)</option>
-                    <option value="Half Day">Half Day (5h)</option>
-                    <option value="No Work Session">No Work Session</option>
+                    {workDayTypeOptions.map((workDayType) => (
+                      <option key={workDayType} value={workDayType}>
+                        {workDayType === "Full Day"
+                          ? "Full Day (9h)"
+                          : workDayType === "Half Day"
+                            ? "Half Day (5h)"
+                            : workDayType}
+                      </option>
+                    ))}
                   </Form.Select>
                   <small className="text-gray">
                     Use this to convert full day to half day or clear worked hours.
@@ -351,8 +440,11 @@ export default function AccessControl() {
                     </td>
                     <td>
                       <Form.Select value={draft.role} onChange={(e) => setRole(user.id, e.target.value)}>
-                        <option value="employee">Employee</option>
-                        <option value="admin">Admin</option>
+                        {roleOptions.map((role) => (
+                          <option key={role} value={role}>
+                            {role.charAt(0).toUpperCase() + role.slice(1)}
+                          </option>
+                        ))}
                       </Form.Select>
                     </td>
                     <td>
@@ -360,7 +452,7 @@ export default function AccessControl() {
                         <span>All permissions</span>
                       ) : (
                         <div>
-                          {employeePermissionOptions.map((permission) => (
+                          {permissionOptions.map((permission) => (
                             <Form.Check
                               inline
                               key={`${user.id}-${permission}`}
@@ -374,10 +466,15 @@ export default function AccessControl() {
                       )}
                     </td>
                     <td>
-                      <Button
-                        size="sm"
-                        onClick={() => updateUserAccess(user.id, draft.role, draft.permissions)}
-                      >
+                        <Button
+                          size="sm"
+                          onClick={async () => {
+                            const response = await updateUserAccess(user.id, draft.role, draft.permissions);
+                            if (!response.success) {
+                              setAttendanceError(response.message || "Unable to update access.");
+                            }
+                          }}
+                        >
                         Save
                       </Button>
                     </td>

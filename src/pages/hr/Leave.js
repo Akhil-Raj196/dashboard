@@ -23,9 +23,6 @@ const drawerStyles = {
   }
 };
 
-const LEAVE_TYPES = ["Paid Leave", "PH Leave", "Casual Leave", "Sick Leave", "Unpaid Leave"];
-const DAY_TYPES = ["Full Day", "Half Day"];
-
 const getStatusVariant = (status = "") => {
   if (status === "Approved") return "success";
   if (status === "Denied") return "danger";
@@ -51,12 +48,15 @@ export default function Leave() {
     leaves,
     applyLeave,
     takeLeaveAction,
-    getPaidLeaveSummary
+    getPaidLeaveSummary,
+    meta
   } = useAuth();
+  const leaveTypes = meta?.leaveTypes || [];
+  const dayTypes = meta?.dayTypes || [];
 
   const [showApplyDrawer, setShowApplyDrawer] = useState(false);
-  const [type, setType] = useState("Paid Leave");
-  const [dayType, setDayType] = useState("Full Day");
+  const [type, setType] = useState(leaveTypes[0] || "");
+  const [dayType, setDayType] = useState(dayTypes[0] || "");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [reason, setReason] = useState("");
@@ -84,53 +84,96 @@ export default function Leave() {
     const manager = currentUser.managerId
       ? users.find((user) => user.id === currentUser.managerId)
       : null;
-    const hrAndSenior = users.filter(
+    const hrUsers = users.filter(
       (user) =>
         user.id !== currentUser.id &&
-        (user.role === "admin" ||
-          (/senior/i.test(user.designation || "") && user.department === currentUser.department))
+        user.role === "admin"
+    );
+    const seniorApprovers = users.filter(
+      (user) =>
+        user.id !== currentUser.id &&
+        user.role !== "admin" &&
+        /senior/i.test(user.designation || "") &&
+        user.department === currentUser.department
     );
     const unique = [];
     const seen = new Set();
-    [manager, ...hrAndSenior].filter(Boolean).forEach((approver) => {
+    [manager, ...hrUsers, ...seniorApprovers].filter(Boolean).forEach((approver) => {
       if (seen.has(approver.id)) return;
       seen.add(approver.id);
-      unique.push(approver);
+      unique.push({
+        ...approver,
+        approverCategory:
+          manager && approver.id === manager.id
+            ? "Reporting Manager"
+            : approver.role === "admin"
+              ? "HR"
+              : "Senior Approver"
+      });
     });
     return unique;
   }, [users, currentUser]);
 
+  const requiredApproverIds = useMemo(
+    () =>
+      availableApprovers
+        .filter((approver) => approver.approverCategory === "Reporting Manager" || approver.approverCategory === "HR")
+        .map((approver) => approver.id),
+    [availableApprovers]
+  );
+
   useEffect(() => {
-    setSelectedApproverIds(availableApprovers.map((approver) => approver.id));
-  }, [availableApprovers]);
+    setSelectedApproverIds((prev) => {
+      const merged = new Set([...prev, ...requiredApproverIds]);
+      return availableApprovers
+        .map((approver) => approver.id)
+        .filter((id) => merged.has(id));
+    });
+  }, [availableApprovers, requiredApproverIds]);
+
+  useEffect(() => {
+    if (!type && leaveTypes[0]) setType(leaveTypes[0]);
+    if (!dayType && dayTypes[0]) setDayType(dayTypes[0]);
+  }, [leaveTypes, dayTypes, type, dayType]);
 
   const pendingForMe = useMemo(
     () => leaves.filter((leave) => leave.currentApproverId === currentUser.id && leave.status.startsWith("Pending")),
     [leaves, currentUser.id]
   );
 
-  const onSubmitLeave = (event) => {
+  const onSubmitLeave = async (event) => {
     event.preventDefault();
     if (selectedApproverIds.length === 0) {
       setFormError("Please select at least one approver email.");
       return;
     }
+    const missingRequiredApprovers = requiredApproverIds.filter((id) => !selectedApproverIds.includes(id));
+    if (missingRequiredApprovers.length > 0) {
+      setFormError("Reporting manager and HR approvers are required for leave approval.");
+      return;
+    }
 
-    applyLeave({ type, dayType, fromDate, toDate, reason, selectedApproverIds });
+    const result = await applyLeave({ type, dayType, fromDate, toDate, reason, selectedApproverIds });
+    if (!result.success) {
+      setFormError(result.message || "Unable to submit leave request.");
+      return;
+    }
     setShowApplyDrawer(false);
     setFormError("");
-    setType("Paid Leave");
-    setDayType("Full Day");
+    setType(leaveTypes[0] || "");
+    setDayType(dayTypes[0] || "");
     setFromDate("");
     setToDate("");
     setReason("");
     setSelectedApproverIds(availableApprovers.map((approver) => approver.id));
   };
 
-  const onApproval = (leaveId, action) => {
+  const onApproval = async (leaveId, action) => {
     const comment = approvalComments[leaveId] || "";
-    takeLeaveAction(leaveId, action, comment);
-    setApprovalComments((prev) => ({ ...prev, [leaveId]: "" }));
+    const result = await takeLeaveAction(leaveId, action, comment);
+    if (result.success) {
+      setApprovalComments((prev) => ({ ...prev, [leaveId]: "" }));
+    }
   };
 
   return (
@@ -283,7 +326,7 @@ export default function Leave() {
                   <Form.Group className="mb-3">
                     <Form.Label>Leave Type</Form.Label>
                     <Form.Select value={type} onChange={(e) => setType(e.target.value)}>
-                      {LEAVE_TYPES.map((leaveType) => (
+                      {leaveTypes.map((leaveType) => (
                         <option key={leaveType} value={leaveType}>{leaveType}</option>
                       ))}
                     </Form.Select>
@@ -292,7 +335,7 @@ export default function Leave() {
                   <Form.Group className="mb-3">
                     <Form.Label>Day Type</Form.Label>
                     <Form.Select value={dayType} onChange={(e) => setDayType(e.target.value)}>
-                      {DAY_TYPES.map((item) => (
+                      {dayTypes.map((item) => (
                         <option key={item} value={item}>{item}</option>
                       ))}
                     </Form.Select>
@@ -317,18 +360,18 @@ export default function Leave() {
                       value={selectedApproverIds}
                       onChange={(e) => {
                         const values = Array.from(e.target.selectedOptions, (option) => option.value);
-                        setSelectedApproverIds(values);
+                        setSelectedApproverIds(Array.from(new Set([...values, ...requiredApproverIds])));
                         setFormError("");
                       }}
                     >
                       {availableApprovers.map((approver) => (
                         <option key={approver.id} value={approver.id}>
-                          {approver.email}
+                          {approver.email} - {approver.approverCategory}
                         </option>
                       ))}
                     </Form.Select>
                     <Form.Text className="text-muted">
-                      Hold Ctrl/Cmd to select multiple approvers.
+                      Reporting manager and HR approvers are mandatory. Hold Ctrl/Cmd to select additional approvers.
                     </Form.Text>
                   </Form.Group>
 

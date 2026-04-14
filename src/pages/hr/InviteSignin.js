@@ -6,25 +6,36 @@ import { useAuth } from "../../context/AuthContext";
 
 export default function InviteSignin() {
   const { token } = useParams();
-  const { loginWithInvite, currentUser } = useAuth();
+  const { loginWithInvite, currentUser, requiresPasswordChange } = useAuth();
   const [error, setError] = useState("");
   const [processed, setProcessed] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+
     if (!token || currentUser) {
       setProcessed(true);
       return;
     }
 
-    const result = loginWithInvite(token);
-    if (!result.success) {
-      setError(result.message || "Unable to process invite link.");
-    }
-    setProcessed(true);
+    const run = async () => {
+      const result = await loginWithInvite(token);
+      if (cancelled) return;
+      if (!result.success) {
+        setError(result.message || "Unable to process invite link.");
+      }
+      setProcessed(true);
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
   }, [token, loginWithInvite, currentUser]);
 
   if (currentUser) {
-    return <Redirect to={Routes.HRDashboard.path} />;
+    return <Redirect to={requiresPasswordChange ? Routes.ChangePassword.path : Routes.HRDashboard.path} />;
   }
 
   return (

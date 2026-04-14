@@ -3,8 +3,6 @@ import { Alert, Button, Card, Col, Form, Row } from "@themesberg/react-bootstrap
 import { useAuth } from "../../context/AuthContext";
 import { computeSalarySlipForPeriod, getCurrentMonthPeriod } from "../../utils/salarySlip";
 
-const CURRENCY_OPTIONS = ["USD", "INR", "EUR", "GBP", "AED", "SGD"];
-
 const formatAmount = (value, currencyCode = "USD") => {
   try {
     return new Intl.NumberFormat(undefined, {
@@ -46,7 +44,8 @@ const getDownloadMarkup = (slip, employeeName) => `<!DOCTYPE html>
 </body></html>`;
 
 export default function PayrollSetup() {
-  const { currentUser, users, attendanceSessions, leaves, holidays, updateEmployeePayroll } = useAuth();
+  const { currentUser, users, attendanceSessions, leaves, holidays, updateEmployeePayroll, meta } = useAuth();
+  const currencyOptions = meta?.currencyOptions || [];
   const [selectedUserId, setSelectedUserId] = useState(users.find((u) => u.role !== "admin")?.id || currentUser.id);
   const [saveMessage, setSaveMessage] = useState("");
   const [payrollForm, setPayrollForm] = useState({
@@ -59,7 +58,7 @@ export default function PayrollSetup() {
     ifscCode: "",
     bankName: "",
     ctcAnnual: "",
-    currency: "USD",
+    currency: currencyOptions[0] || "USD",
     basicPct: "40",
     hraPct: "20",
     conveyanceFixed: "0",
@@ -72,6 +71,12 @@ export default function PayrollSetup() {
     tds: "0",
     loanDeduction: "0"
   });
+
+  useEffect(() => {
+    if (!selectedUserId && users.find((user) => user.role !== "admin")?.id) {
+      setSelectedUserId(users.find((user) => user.role !== "admin")?.id || currentUser.id);
+    }
+  }, [users, selectedUserId, currentUser.id]);
 
   const userMap = useMemo(
     () =>
@@ -95,7 +100,7 @@ export default function PayrollSetup() {
       ifscCode: payroll.ifscCode || "",
       bankName: payroll.bankName || "",
       ctcAnnual: payroll.ctcAnnual ? String(payroll.ctcAnnual) : "",
-      currency: payroll.currency || "USD",
+      currency: payroll.currency || currencyOptions[0] || "USD",
       basicPct: String(payroll.basicPct ?? 40),
       hraPct: String(payroll.hraPct ?? 20),
       conveyanceFixed: String(payroll.conveyanceFixed ?? 0),
@@ -108,7 +113,7 @@ export default function PayrollSetup() {
       tds: String(payroll.tds ?? 0),
       loanDeduction: String(payroll.loanDeduction ?? 0)
     });
-  }, [selectedUserId, users, currentUser]);
+  }, [selectedUserId, users, currentUser, currencyOptions]);
 
   const monthPeriod = getCurrentMonthPeriod(new Date());
   const draftSlip = useMemo(() => {
@@ -134,9 +139,9 @@ export default function PayrollSetup() {
 
   const onPayrollField = (key, value) => setPayrollForm((prev) => ({ ...prev, [key]: value }));
 
-  const onSavePayroll = (event) => {
+  const onSavePayroll = async (event) => {
     event.preventDefault();
-    const result = updateEmployeePayroll(selectedUserId, {
+    const result = await updateEmployeePayroll(selectedUserId, {
       ...payrollForm,
       ctcAnnual: Number(payrollForm.ctcAnnual || 0),
       basicPct: Number(payrollForm.basicPct || 0),
@@ -226,7 +231,7 @@ export default function PayrollSetup() {
                 <Col xs={12} md={6} className="mb-3">
                   <Form.Label>Currency</Form.Label>
                   <Form.Select value={payrollForm.currency} onChange={(e) => onPayrollField("currency", e.target.value)}>
-                    {CURRENCY_OPTIONS.map((code) => (
+                    {currencyOptions.map((code) => (
                       <option key={code} value={code}>{code}</option>
                     ))}
                   </Form.Select>

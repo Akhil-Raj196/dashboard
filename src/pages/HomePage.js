@@ -10,6 +10,7 @@ import Footer from "../components/Footer";
 
 import Login from "./hr/Login";
 import InviteSignin from "./hr/InviteSignin";
+import ChangePassword from "./hr/ChangePassword";
 import Dashboard from "./hr/Dashboard";
 import CompanyPosts from "./hr/CompanyPosts";
 import Attendance from "./hr/Attendance";
@@ -23,13 +24,15 @@ import Notifications from "./hr/Notifications";
 import AccessControl from "./hr/AccessControl";
 
 const GuardedRoute = ({ component: Component, permission, ...rest }) => {
-  const { currentUser, hasPermission } = useAuth();
+  const { currentUser, hasPermission, isReady, requiresPasswordChange } = useAuth();
 
   return (
     <Route
       {...rest}
       render={(props) => {
+        if (!isReady) return null;
         if (!currentUser) return <Redirect to={Routes.Login.path} />;
+        if (requiresPasswordChange) return <Redirect to={Routes.ChangePassword.path} />;
         if (permission && !hasPermission(permission)) return <Redirect to={Routes.HRDashboard.path} />;
 
         return (
@@ -48,7 +51,9 @@ const GuardedRoute = ({ component: Component, permission, ...rest }) => {
 };
 
 const LoginRoute = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, isReady, requiresPasswordChange } = useAuth();
+  if (!isReady) return null;
+  if (currentUser && requiresPasswordChange) return <Redirect to={Routes.ChangePassword.path} />;
   if (currentUser) return <Redirect to={Routes.HRDashboard.path} />;
   return <Login />;
 };
@@ -58,6 +63,7 @@ export default function HomePage() {
     <Switch>
       <Route exact path={Routes.Login.path} component={LoginRoute} />
       <Route exact path={Routes.InviteSignin.path} component={InviteSignin} />
+      <Route exact path={Routes.ChangePassword.path} component={ChangePassword} />
 
       <GuardedRoute exact path={Routes.HRDashboard.path} component={Dashboard} permission="dashboard" />
       <GuardedRoute exact path={Routes.CompanyPosts.path} component={CompanyPosts} permission="company_posts" />

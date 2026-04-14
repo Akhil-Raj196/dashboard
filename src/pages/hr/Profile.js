@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Button, Card, Col, Form, Image, Row, Table } from "@themesberg/react-bootstrap";
 import { useAuth } from "../../context/AuthContext";
+import {
+  ALLOWED_DOCUMENT_MIME_TYPES,
+  ALLOWED_IMAGE_MIME_TYPES,
+  isPdfDataUrl,
+  readFileAsDataUrl,
+  validateFileType
+} from "../../utils/fileUploads";
 
 const drawerStyles = {
   overlay: {
@@ -36,17 +43,30 @@ const hasValue = (value) => {
   return value !== null && value !== undefined;
 };
 
-const readFileAsDataUrl = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+const buildReportingChain = (currentUser, users) => {
+  const chain = [];
+  const visited = new Set([currentUser.id]);
+  const userMap = users.reduce((acc, user) => {
+    acc[user.id] = user;
+    return acc;
+  }, {});
+  let managerId = currentUser.managerId;
+
+  while (managerId) {
+    const manager = userMap[managerId];
+    if (!manager || visited.has(manager.id)) break;
+    visited.add(manager.id);
+    chain.push(manager);
+    managerId = manager.managerId;
+  }
+
+  return chain;
+};
 
 export default function Profile() {
   const {
     currentUser,
+    users,
     updateCurrentUserProfile,
     deleteEducationEntry,
     deleteVerificationDocument
@@ -54,6 +74,7 @@ export default function Profile() {
 
   const [showEditor, setShowEditor] = useState(false);
   const [draft, setDraft] = useState(null);
+  const [uploadError, setUploadError] = useState("");
 
   useEffect(() => {
     if (!currentUser) return;
@@ -63,6 +84,7 @@ export default function Profile() {
       department: currentUser.department || "",
       phone: currentUser.phone || "",
       location: currentUser.location || "",
+      image: currentUser.image || "",
       personalDetails: {
         dob: currentUser.personalDetails?.dob || currentUser.dob || "",
         gender: currentUser.personalDetails?.gender || "",
@@ -118,6 +140,15 @@ export default function Profile() {
 
     return allFields.filter(([, value]) => hasValue(value));
   }, [currentUser]);
+
+  const reportingChain = useMemo(() => {
+    return buildReportingChain(currentUser, users);
+  }, [currentUser, users]);
+
+  const directReports = useMemo(
+    () => users.filter((user) => user.managerId === currentUser.id),
+    [users, currentUser.id]
+  );
 
   const educationRows = useMemo(
     () =>
@@ -180,28 +211,49 @@ export default function Profile() {
 
   const onUploadDocument = async (type, file) => {
     if (!file) return;
+    const validation = validateFileType(file, ALLOWED_DOCUMENT_MIME_TYPES);
+    if (!validation.valid) {
+      setUploadError(validation.message);
+      return;
+    }
     const dataUrl = await readFileAsDataUrl(file);
     const key = type === "aadhar" ? "aadharImage" : "panImage";
+    setUploadError("");
     onDraftDocField(key, dataUrl);
   };
 
-  const onUpdate = () => {
+  const onUploadProfilePhoto = async (file) => {
+    if (!file) return;
+    const validation = validateFileType(file, ALLOWED_IMAGE_MIME_TYPES);
+    if (!validation.valid) {
+      setUploadError(validation.message);
+      return;
+    }
+    const dataUrl = await readFileAsDataUrl(file);
+    setUploadError("");
+    onDraftField("image", dataUrl);
+  };
+
+  const onUpdate = async () => {
     const cleanedEducation = (draft.educationDetails || []).filter(
       (edu) => edu.degree || edu.institution || edu.year || edu.score
     );
 
-    updateCurrentUserProfile({
+    const result = await updateCurrentUserProfile({
       name: draft.name,
       designation: draft.designation,
       department: draft.department,
       phone: draft.phone,
       location: draft.location,
+      image: draft.image,
       personalDetails: draft.personalDetails,
       educationDetails: cleanedEducation,
       verificationDocs: draft.verificationDocs
     });
 
-    setShowEditor(false);
+    if (result.success) {
+      setShowEditor(false);
+    }
   };
 
   return (
@@ -239,10 +291,20 @@ export default function Profile() {
                     <div>Number: {currentUser.verificationDocs.aadharNumber}</div>
                   ) : null}
                   {currentUser.verificationDocs?.aadharImage ? (
-                    <Image src={currentUser.verificationDocs.aadharImage} thumbnail className="mt-2" />
+                    isPdfDataUrl(currentUser.verificationDocs.aadharImage) ? (
+                      <div className="mt-2">
+                        <a href={currentUser.verificationDocs.aadharImage} target="_blank" rel="noopener noreferrer">
+                          Open Aadhar PDF
+                        </a>
+                      </div>
+                    ) : (
+                      <Image src={currentUser.verificationDocs.aadharImage} thumbnail className="mt-2" />
+                    )
                   ) : null}
                   <div className="mt-2">
-                    <Button size="sm" variant="outline-danger" onClick={() => deleteVerificationDocument("aadhar")}>
+                    <Button size="sm" variant="outline-danger" onClick={async () => {
+                      await deleteVerificationDocument("aadhar");
+                    }}>
                       Delete Aadhar
                     </Button>
                   </div>
@@ -259,10 +321,20 @@ export default function Profile() {
                     <div>Number: {currentUser.verificationDocs.panNumber}</div>
                   ) : null}
                   {currentUser.verificationDocs?.panImage ? (
-                    <Image src={currentUser.verificationDocs.panImage} thumbnail className="mt-2" />
+                    isPdfDataUrl(currentUser.verificationDocs.panImage) ? (
+                      <div className="mt-2">
+                        <a href={currentUser.verificationDocs.panImage} target="_blank" rel="noopener noreferrer">
+                          Open PAN PDF
+                        </a>
+                      </div>
+                    ) : (
+                      <Image src={currentUser.verificationDocs.panImage} thumbnail className="mt-2" />
+                    )
                   ) : null}
                   <div className="mt-2">
-                    <Button size="sm" variant="outline-danger" onClick={() => deleteVerificationDocument("pan")}>
+                    <Button size="sm" variant="outline-danger" onClick={async () => {
+                      await deleteVerificationDocument("pan");
+                    }}>
                       Delete PAN
                     </Button>
                   </div>
@@ -295,6 +367,62 @@ export default function Profile() {
             </Card.Body>
           </Card>
 
+          <Card border="light" className="shadow-sm mb-4">
+            <Card.Header>
+              <h5 className="mb-0">Reporting Hierarchy</h5>
+            </Card.Header>
+            <Card.Body>
+              {reportingChain.length === 0 ? (
+                <p className="mb-3">No reporting manager mapped yet.</p>
+              ) : (
+                <Table responsive className="mb-3">
+                  <thead>
+                    <tr>
+                      <th>Level</th>
+                      <th>Name</th>
+                      <th>Designation</th>
+                      <th>Email</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportingChain.map((manager, index) => (
+                      <tr key={manager.id}>
+                        <td>{index === 0 ? "Reporting Manager" : `Level ${index + 1}`}</td>
+                        <td>{manager.name}</td>
+                        <td>{manager.designation || "-"}</td>
+                        <td>{manager.email}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              )}
+
+              {directReports.length > 0 ? (
+                <>
+                  <h6 className="mb-2">Direct Reports</h6>
+                  <Table responsive className="mb-0">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Designation</th>
+                        <th>Department</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {directReports.map((user) => (
+                        <tr key={user.id}>
+                          <td>{user.name}</td>
+                          <td>{user.designation || "-"}</td>
+                          <td>{user.department || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </>
+              ) : null}
+            </Card.Body>
+          </Card>
+
           <Card border="light" className="shadow-sm">
             <Card.Header>
               <h5 className="mb-0">Educational Details</h5>
@@ -324,7 +452,9 @@ export default function Profile() {
                           <Button
                             size="sm"
                             variant="outline-danger"
-                            onClick={() => deleteEducationEntry(edu.id)}
+                            onClick={async () => {
+                              await deleteEducationEntry(edu.id);
+                            }}
                           >
                             Delete
                           </Button>
@@ -353,6 +483,7 @@ export default function Profile() {
             <Card border="light" className="shadow-sm mb-3">
               <Card.Header><h6 className="mb-0">Basic Details</h6></Card.Header>
               <Card.Body>
+                {uploadError ? <div className="alert alert-danger">{uploadError}</div> : null}
                 <Row>
                   <Col md={6} className="mb-3">
                     <Form.Label>Name</Form.Label>
@@ -373,6 +504,16 @@ export default function Profile() {
                   <Col md={6} className="mb-3">
                     <Form.Label>Location</Form.Label>
                     <Form.Control value={draft.location} onChange={(e) => onDraftField("location", e.target.value)} />
+                  </Col>
+                  <Col md={6} className="mb-3">
+                    <Form.Label>Profile Photo</Form.Label>
+                    <Form.Control type="file" accept=".jpeg,.jpg,.png,image/jpeg,image/png" onChange={(e) => onUploadProfilePhoto(e.target.files?.[0])} />
+                    {draft.image ? (
+                      <div className="mt-3 text-center">
+                        <Image src={draft.image} roundedCircle width={96} height={96} />
+                        <div className="small text-gray mt-2">Selected photo preview</div>
+                      </div>
+                    ) : null}
                   </Col>
                   <Col md={6} className="mb-3">
                     <Form.Label>Employee Code</Form.Label>
@@ -490,7 +631,7 @@ export default function Profile() {
                   </Col>
                   <Col md={12} className="mb-3">
                     <Form.Label>Aadhar Image</Form.Label>
-                    <Form.Control type="file" accept="image/*" onChange={(e) => onUploadDocument("aadhar", e.target.files?.[0])} />
+                    <Form.Control type="file" accept=".jpeg,.jpg,.png,.pdf,image/jpeg,image/png,application/pdf" onChange={(e) => onUploadDocument("aadhar", e.target.files?.[0])} />
                   </Col>
 
                   <Col md={6} className="mb-3">
@@ -503,7 +644,7 @@ export default function Profile() {
                   </Col>
                   <Col md={12} className="mb-3">
                     <Form.Label>PAN Image</Form.Label>
-                    <Form.Control type="file" accept="image/*" onChange={(e) => onUploadDocument("pan", e.target.files?.[0])} />
+                    <Form.Control type="file" accept=".jpeg,.jpg,.png,.pdf,image/jpeg,image/png,application/pdf" onChange={(e) => onUploadDocument("pan", e.target.files?.[0])} />
                   </Col>
                 </Row>
               </Card.Body>
