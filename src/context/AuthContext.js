@@ -452,7 +452,7 @@ export const AuthProvider = ({ children }) => {
     withHandledRequest(async () => {
       const response = await hrApi.createInvite({
         currentUserId: currentUser.id,
-        appBaseUrl: `${window.location.origin}${process.env.PUBLIC_URL || "/ingeniousportal"}`,
+        appBaseUrl: `${window.location.origin}${process.env.PUBLIC_URL || ""}`,
         ...inviteInput
       });
       applyServerState(response.state, currentUser.id);

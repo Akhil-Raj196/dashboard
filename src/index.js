@@ -11,7 +11,7 @@ import ScrollToTop from "./components/ScrollToTop";
 import { AuthProvider } from "./context/AuthContext";
 
 ReactDOM.render(
-  <BrowserRouter basename="/ingeniousportal">
+  <BrowserRouter basename={process.env.PUBLIC_URL || ""}>
     <AuthProvider>
       <ScrollToTop />
       <HomePage />
